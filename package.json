@@ -15,6 +15,7 @@
         "@pkmn/sim": "^0.7.47",
         "@pkmn/streams": "^1.1.0",
         "csv-parse": "^5.4.0",
+        "papaparse": "^5.4.1",
         "ts-jest": "^29.1.1"
     },
     "devDependencies": {

@@ -13,5 +13,5 @@ const modid = formatid.slice(0, 4);
 const gens = new Generations(new ModdedDex(modid));
 
 const player = new Player(null, 0, 0, new Battle(gens));
-const stateSize = Math.floor(player.getState().length / 2);
+const stateSize = player.getState().length / 2;
 console.log(`State Bits: `, stateSize);
