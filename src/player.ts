@@ -37,7 +37,7 @@ export class Player {
         playerIndex: number,
         game: Game,
         gens: Generations,
-        debug: boolean = false
+        debug: boolean = false,
     ) {
         this.game = game;
         this.playerIndex = playerIndex;
@@ -104,7 +104,7 @@ export class Player {
         outStream: WriteStream,
         options: {
             noEnd?: boolean;
-        } = {}
+        } = {},
     ) {
         let value: string | string[], done: any, act: boolean, state: Buffer;
         while ((({ value, done } = await this.stream.next()), !done)) {
@@ -118,6 +118,7 @@ export class Player {
             if (act) {
                 state = this.getState();
                 if (this.debug) {
+                    await outStream.write(state);
                     this.stream.write("default");
                 } else {
                     await outStream.write(state);

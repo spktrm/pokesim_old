@@ -43,7 +43,7 @@ function getLegalMask(request: AnyObject, done: boolean) {
                 !!(
                     +!!pokemon[0].reviving ^
                     +!pokemon[j - 1].condition.endsWith(` fnt`)
-                )
+                ),
         );
         for (let i = 0; i < switches.length; i++) {
             const slot = switches[i];
@@ -57,7 +57,7 @@ function getLegalMask(request: AnyObject, done: boolean) {
             .filter(
                 (j) =>
                     // not disabled
-                    !possibleMoves[j - 1].disabled
+                    !possibleMoves[j - 1].disabled,
                 // NOTE: we don't actually check for whether we have PP or not because the
                 // simulator will mark the move as disabled if there is zero PP and there are
                 // situations where we actually need to use a move with 0 PP (Gen 1 Wrap).
@@ -75,7 +75,7 @@ function getLegalMask(request: AnyObject, done: boolean) {
                 // not active
                 !pokemon[j - 1].active &&
                 // not fainted
-                !pokemon[j - 1].condition.endsWith(` fnt`)
+                !pokemon[j - 1].condition.endsWith(` fnt`),
         );
         const switches = active.trapped || active.maybeTrapped ? [] : canSwitch;
 
@@ -100,7 +100,7 @@ function numberTo16BitArray(number: number): Array<number> {
 
 async function AssertMask(
     stream: ObjectReadWriteStream<string>,
-    room: Battle
+    room: Battle,
 ): Promise<void> {
     let testMask: number[], corrMask: number[], testP1Side: number[];
     for await (const chunk of stream) {
@@ -113,7 +113,7 @@ async function AssertMask(
             corrMask = getLegalMask(room.request, false);
 
             expect(
-                testMask
+                testMask,
                 // numberTo16BitArray(testMask).slice(-corrMask.length)
             ).toEqual(corrMask);
 
@@ -123,7 +123,7 @@ async function AssertMask(
     testMask = Uint16State.getLegalMask(room.request, true);
     corrMask = getLegalMask(room.request, true);
     expect(
-        testMask
+        testMask,
         // numberTo16BitArray(testMask).slice(-corrMask.length)
     ).toEqual(corrMask);
 }
@@ -133,7 +133,7 @@ describe("test-state", () => {
         Teams.setGeneratorFactory(TeamGenerators);
 
         const streams = BattleStreams.getPlayerStreams(
-            new BattleStreams.BattleStream()
+            new BattleStreams.BattleStream(),
         );
         const formatid = "gen7randombattle";
         const spec = { formatid: formatid, seed: [69, 69, 69, 69] };
@@ -161,7 +161,7 @@ describe("test-state", () => {
     });
     test("test-2", async () => {
         const streams = BattleStreams.getPlayerStreams(
-            new BattleStreams.BattleStream()
+            new BattleStreams.BattleStream(),
         );
         const formatid = "gen9randombattle";
         const spec = { formatid: formatid, seed: [420, 69, 420, 69] };

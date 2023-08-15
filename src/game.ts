@@ -20,7 +20,7 @@ export class Game {
         gameIndex: number,
         formatid: string,
         gens: Generations,
-        debug: boolean = false
+        debug: boolean = false,
     ) {
         this.gameIndex = gameIndex;
         this.formatid = formatid;
@@ -52,14 +52,14 @@ export class Game {
                 0,
                 this,
                 this.gens,
-                this.debug
+                this.debug,
             );
             this.p2 = new Player(
                 this.streams.p2,
                 1,
                 this,
                 this.gens,
-                this.debug
+                this.debug,
             );
 
             this.p1.pipeTo(stdout());
