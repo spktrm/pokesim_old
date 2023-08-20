@@ -29,10 +29,12 @@ export function byteToCommand(actionIndex: number): string {
     let cmd: string;
     if (actionIndex === 255) {
         cmd = "default";
-    } else if (actionIndex >= 0 || actionIndex < 4) {
-        cmd = `move ${cmd + 1}`;
-    } else if (actionIndex >= 4 || actionIndex < 10) {
-        cmd = `switch ${cmd + 1}`;
+    } else {
+        if (actionIndex >= 0 && actionIndex < 4) {
+            cmd = `move ${actionIndex + 1}`;
+        } else if (actionIndex >= 4 && actionIndex < 10) {
+            cmd = `switch ${actionIndex + 1 - 4}`;
+        }
     }
     return cmd;
 }
@@ -40,15 +42,15 @@ export function byteToCommand(actionIndex: number): string {
 export const n = 1;
 export const messageSize = 4;
 
-export function start() {
+export function start(numGames: number = -1, debug: boolean = false) {
     var stdin = new StdinReadBytes(process.stdin);
 
     let games: GameStore = {};
 
     for (let i = 0; i < n; i++) {
-        const game = new Game(i, formatid, gens);
+        const game = new Game(i, formatid, gens, debug);
         games[i] = game;
-        game.run();
+        game.run(numGames);
     }
 
     (async () => {
@@ -81,4 +83,5 @@ export function start() {
             await outStream.write(cmd);
         }
     })();
+    return games;
 }

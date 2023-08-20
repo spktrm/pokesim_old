@@ -14,6 +14,7 @@ import {
     weatherMapping,
 } from "./data";
 import { SideConditions } from "./types";
+import { Request } from "@pkmn/protocol";
 
 function formatKey(key: string): string {
     // Convert to lowercase and remove spaces and non-alphanumeric characters
@@ -41,7 +42,7 @@ function getMappingValue(
     return value ?? -1;
 }
 
-function getPokemon(pokemon: AnyObject, active: boolean) {
+function getPublicPokemon(pokemon: AnyObject, active: boolean) {
     let moveTokens = [];
     for (let i = 0; i < 4; i++) {
         moveTokens.push(
@@ -52,11 +53,27 @@ function getPokemon(pokemon: AnyObject, active: boolean) {
         getMappingValue(pokemon, pokemonMapping, formatKey(pokemon.name)),
         getMappingValue(pokemon, itemMapping, pokemon.item),
         getMappingValue(pokemon, abilityMapping, pokemon.ability),
-        1000 *
-            Math.floor(
-                (pokemon.hp ?? 0) / Math.max(pokemon.maxhp ?? 0, 1) || 1,
-            ),
+        Math.floor(10 * pokemon.hp),
         active ? 1 : 0,
+        pokemon.fainted ? 1 : 0,
+        statusMapping[pokemon.status] ?? -1,
+        ...moveTokens,
+    ];
+}
+
+function getPrivatePokemon(pokemon: AnyObject) {
+    let moveTokens = [];
+    for (let i = 0; i < 4; i++) {
+        moveTokens.push(
+            getMappingValue(pokemon, moveMapping, pokemon.moves[i]),
+        );
+    }
+    return [
+        getMappingValue(pokemon, pokemonMapping, formatKey(pokemon.name)),
+        getMappingValue(pokemon, itemMapping, pokemon.item),
+        getMappingValue(pokemon, abilityMapping, pokemon.ability),
+        Math.floor(1000 * (pokemon.hp / pokemon.maxhp)),
+        pokemon.active ? 1 : 0,
         pokemon.fainted ? 1 : 0,
         statusMapping[pokemon.status] ?? -1,
         ...moveTokens,
@@ -74,10 +91,20 @@ function binaryArrayToNumber(binArray: number[]): number {
     return number;
 }
 
-const fillPokemon = getPokemon({ name: "", moves: [] }, false);
+const fillPokemon = getPublicPokemon({ name: "", moves: [] }, false);
 const boostsEntries = Object.entries(boostsMapping);
 
 export class Uint16State {
+    static getRequest(request: Request): number[] {
+        let pokemon = [];
+        let arr: number[];
+        for (const pokemonObj of request.side.pokemon) {
+            arr = getPrivatePokemon(pokemonObj);
+            pokemon.push(arr);
+        }
+        return [].concat(...pokemon);
+    }
+
     static getBoosts(actives: Pokemon[]): number[] {
         const boostsVector = Array(actives.length * boostsEntries.length);
         boostsVector.fill(0);
@@ -169,7 +196,7 @@ export class Uint16State {
     }
 
     static getPokemon(pokemon: Pokemon, active: boolean): number[] {
-        return getPokemon(pokemon, active);
+        return getPublicPokemon(pokemon, active);
     }
 
     static getLegalMask(request: AnyObject, done: boolean): number[] {

@@ -165,3 +165,7 @@ coverage
 *.sim
 
 *.cProfile
+
+*.pt
+
+wandb/
