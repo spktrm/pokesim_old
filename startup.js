@@ -1,17 +1,14 @@
-const { Battle } = require("@pkmn/client");
-const { Player } = require("./dist/src/player");
+const { start } = require("./dist/src/sim");
 
-const { Generations, ID } = require("@pkmn/data");
-const { ModdedDex } = require("@pkmn/dex");
-const { Teams } = require("@pkmn/sim");
-const { TeamGenerators } = require("@pkmn/randoms");
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
-Teams.setGeneratorFactory(TeamGenerators);
+async function asyncFunction() {
+    const games = start(1);
+    await delay(2000); // Waits for 2 seconds
+    const state = games[0].p1.getState();
+    console.log(`State Bits: `, state.length / 2);
+}
 
-const formatid = "gen9randombattle";
-const modid = formatid.slice(0, 4);
-const gens = new Generations(new ModdedDex(modid));
-
-const player = new Player(null, 0, 0, new Battle(gens));
-const stateSize = player.getState().length / 2;
-console.log(`State Bits: `, stateSize);
+asyncFunction();

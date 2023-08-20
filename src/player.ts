@@ -23,6 +23,23 @@ export function isActionRequired(chunk: string, request: AnyObject): boolean {
 
 const workerIndex = parseInt(process.argv[2]) || 0;
 
+function randomAction(arr: Array<number>) {
+    const nonZeroIndices = arr.reduce((indices, value, index) => {
+        if (value !== 0) {
+            indices.push(index);
+        }
+        return indices;
+    }, []);
+    const randomIndex = Math.floor(Math.random() * nonZeroIndices.length);
+    const index = nonZeroIndices[randomIndex];
+
+    if (index >= 0 && index < 4) {
+        return `move ${index + 1}`;
+    } else {
+        return `switch ${index - 4 + 1}`;
+    }
+}
+
 export class Player {
     game: Game;
     playerIndex: number;
@@ -37,7 +54,7 @@ export class Player {
         playerIndex: number,
         game: Game,
         gens: Generations,
-        debug: boolean = false,
+        debug: boolean = false
     ) {
         this.game = game;
         this.playerIndex = playerIndex;
@@ -54,11 +71,11 @@ export class Player {
         let winner: number;
         const stream = this.getStream();
         if (stream === undefined) {
-            return 0;
+            return -1;
         }
         switch (stream.battle.winner) {
             case undefined:
-                winner = 0;
+                winner = -1;
                 break;
             case this.room.p1.name:
                 winner = 0;
@@ -69,7 +86,7 @@ export class Player {
         }
         return winner;
     }
-    getState() {
+    getState(): Buffer {
         const baseInfo: number[] = [
             workerIndex,
             this.game.gameIndex,
@@ -78,8 +95,13 @@ export class Player {
             this.getWinner(),
             this.room.turn,
         ];
+        const legalMask = Uint16State.getLegalMask(
+            this.room.request,
+            this.done
+        );
         const arr = new Int16Array([
             ...baseInfo,
+            ...Uint16State.getRequest(this.room.request),
             ...Uint16State.getTeam(this.room.p1.team, this.room.p1.active),
             ...Uint16State.getTeam(this.room.p2.team, this.room.p2.active),
             ...Uint16State.getSideConditions(this.room.p1.sideConditions),
@@ -89,12 +111,17 @@ export class Player {
             ...Uint16State.getBoosts(this.room.p1.active),
             ...Uint16State.getBoosts(this.room.p2.active),
             ...Uint16State.getField(this.room.field),
-            ...Uint16State.getLegalMask(this.room.request, this.done),
+            ...legalMask,
         ]);
         const buf = Buffer.from(arr.buffer);
         return buf;
     }
     receive(chunk: string): boolean {
+        const err = false;
+        if (chunk.startsWith("|error")) {
+            // console.log(chunk);
+            return true;
+        }
         for (const line of chunk.split("\n")) {
             this.room.add(line);
         }
@@ -104,31 +131,30 @@ export class Player {
         outStream: WriteStream,
         options: {
             noEnd?: boolean;
-        } = {},
+        } = {}
     ) {
         let value: string | string[], done: any, act: boolean, state: Buffer;
         while ((({ value, done } = await this.stream.next()), !done)) {
-            if (value.includes("|error")) {
-                // process.stderr.write(value)
-                if (this.debug) {
-                    console.log(value);
-                }
-            }
             act = this.receive(value);
             if (act) {
                 state = this.getState();
                 if (this.debug) {
                     await outStream.write(state);
-                    this.stream.write("default");
+                    this.stream.write(
+                        randomAction(
+                            Uint16State.getLegalMask(
+                                this.room.request,
+                                this.done
+                            )
+                        )
+                    );
                 } else {
                     await outStream.write(state);
                 }
             }
         }
         state = this.getState();
-        if (!this.debug) {
-            await outStream.write(state);
-        }
+        await outStream.write(state);
         if (!options.noEnd) return outStream.writeEnd();
     }
     destroy() {

@@ -28,9 +28,15 @@ export class Game {
         this.debug = debug;
     }
 
-    async run() {
-        while (true) {
-            await this.play();
+    async run(numGames: number = -1) {
+        if (numGames < 0) {
+            while (true) {
+                await this.play();
+            }
+        } else {
+            for (let i = 0; i < numGames; i++) {
+                await this.play();
+            }
         }
     }
 
