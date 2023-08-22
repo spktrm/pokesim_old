@@ -94,4 +94,4 @@ class EvalActor(Actor):
         )
 
     def _done_callback(self, reward: int):
-        self.eval_queue.put((1 - reward))
+        self.eval_queue.put((reward))

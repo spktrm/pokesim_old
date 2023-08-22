@@ -25,11 +25,7 @@ class Manager:
         dones = {}
 
         while True:
-            data = await self.process.stdout.read(_STATE_BYTES)
-
-            if data[:6].decode() == "|error":
-                print(data.decode())
-                continue
+            data = await self.process.stdout.readuntil(b"\n\n")
 
             env_step = EnvStep.from_data(data)
 
@@ -65,6 +61,7 @@ class Manager:
                     action = Action.from_env_step(env_step).default()
 
                 self.process.stdin.write(action)
+                await self.process.stdin.drain()
             else:
                 reward = env_step.rewards[..., env_step.player_id.item()]
                 actor._done_callback(reward.item())

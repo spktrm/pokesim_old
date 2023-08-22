@@ -86,16 +86,18 @@ def run_selfplay(
     asyncio.run(_selfplay(worker_index, model, progress_queue, learn_queue))
 
 
-def read_prog(progress_queue: mp.Queue, eval_queue: mp.Queue):
+def read_prog(progress_queue: mp.Queue):
     progress1 = tqdm(desc="games")
     progress2 = tqdm(desc="steps", leave=False)
-
-    n = 0
     while True:
         l = progress_queue.get()
         progress1.update(1)
         progress2.update(l)
 
+
+def read_eval(eval_queue: mp.Queue):
+    n = 0
+    while True:
         r = eval_queue.get()
         if not _DEBUG:
             wandb.log({"n": n, "r": r})
@@ -106,7 +108,9 @@ def dataloader(queue: mp.Queue, batch_size: int = 16) -> Iterator[Batch]:
     batch = []
     while True:
         sample = queue.get()
-        batch.append(Trajectory.deserialize(sample))
+        trajectory = Trajectory.deserialize(sample)
+        if trajectory.is_valid():
+            batch.append(trajectory)
         if len(batch) >= batch_size:
             batch = Batch.from_trajectories(batch)
             yield batch
@@ -132,7 +136,7 @@ def learn(learner: Learner, queue: mp.Queue):
         if not _DEBUG:
             wandb.log(logs)
 
-        if learner.learner_steps % 1000 == 0:
+        if learner.learner_steps % 2500 == 0:
             torch.save(
                 learner.params.state_dict(), f"ckpts/ckpt-{learner.learner_steps}.pt"
             )
@@ -141,7 +145,9 @@ def learn(learner: Learner, queue: mp.Queue):
 
 
 def main():
-    learner = Learner()
+    # init = torch.load("ckpts/ckpt-35000.pt")
+    init = None
+    learner = Learner(init)
 
     if not _DEBUG:
         wandb.init(
@@ -153,12 +159,13 @@ def main():
 
     progress_queue = mp.Queue()
     eval_queue = mp.Queue()
-    learn_queue = mp.Queue(maxsize=1000)
+    learn_queue = mp.Queue(maxsize=100)
 
-    progress_thread = threading.Thread(
-        target=read_prog, args=(progress_queue, eval_queue)
-    )
+    progress_thread = threading.Thread(target=read_prog, args=(progress_queue,))
     progress_thread.start()
+
+    eval_thread = threading.Thread(target=read_eval, args=(eval_queue,))
+    eval_thread.start()
 
     learn_thread = threading.Thread(
         target=learn,
@@ -173,7 +180,7 @@ def main():
             target=run_selfplay,
             args=(worker_index, learner.params_actor, progress_queue, learn_queue),
         )
-        for worker_index in range(11)
+        for worker_index in range(_NUM_CPUS - 1)
     ]
     procs += [
         mp.Process(
@@ -189,6 +196,7 @@ def main():
 
     progress_thread.join()
     learn_thread.join()
+    eval_thread.join()
 
 
 if __name__ == "__main__":

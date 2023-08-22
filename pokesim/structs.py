@@ -1,5 +1,6 @@
 import numpy as np
 
+import pickle
 import msgpack
 import msgpack_numpy as m
 
@@ -7,6 +8,8 @@ from typing import List, Dict, NamedTuple
 
 from pokesim.utils import get_arr
 from pokesim.types import TensorType
+
+_r = lambda arr: arr.reshape(1, 1, -1)
 
 
 class EnvStep(NamedTuple):
@@ -19,8 +22,7 @@ class EnvStep(NamedTuple):
 
     @classmethod
     def from_data(cls, data: bytes) -> "EnvStep":
-        _r = lambda arr: arr.reshape(1, 1, -1)
-        state = _r(get_arr(data))
+        state = _r(get_arr(data[:-2]))
         legal = state[..., -10:].astype(bool)
         valid = (1 - state[..., 3]).astype(bool)
         player_id = state[..., 2]
@@ -95,6 +97,20 @@ class Trajectory(NamedTuple):
     policy: TensorType
     action: TensorType
 
+    def save(self, fpath: str):
+        print(f"Saving `{fpath}`")
+        with open(fpath, "wb") as f:
+            f.write(pickle.dumps(self.serialize()))
+
+    @classmethod
+    def load(cls, fpath: str):
+        with open(fpath, "rb") as f:
+            data = pickle.loads(f.read())
+        return Trajectory.deserialize(data)
+
+    def is_valid(self):
+        return self.valid.sum() > 0
+
     @classmethod
     def from_env_steps(cls, traj: List[TimeStep]) -> "Trajectory":
         actor_fields = {"policy", "action"}
@@ -134,11 +150,13 @@ class Batch(Trajectory):
         data = {
             key: np.concatenate(
                 [np.resize(sv, (max_size, *sv.shape[1:])) for sv in value], axis=1
-            )
+            )[:256]
             for key, value in store.items()
         }
-        data["valid"] = np.arange(data["valid"].shape[0])[:, None] < np.argmax(
-            data["valid"] == False, 0
-        )
+        arange = np.arange(data["valid"].shape[0])[:, None]
+        amax = np.argmax(data["valid"] == False, 0)
+        data["valid"] = arange < amax
         data["rewards"][:-1] = data["rewards"][1:]
+        _rewards_prev = data["rewards"]
+        data["rewards"] = _rewards_prev * (arange == (amax - 1))[..., None]
         return cls(**data)

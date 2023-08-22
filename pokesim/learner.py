@@ -5,12 +5,12 @@ import torch.nn as nn
 import torch.optim as optim
 
 from copy import deepcopy
-from typing import List
+from typing import Any, List, Mapping
 
 from pokesim.constants import _NUM_PLAYERS
 from pokesim.model.main import Model
 from pokesim.structs import Batch
-from pokesim.utils import preprocess
+from pokesim.utils import preprocess, optimized_forward
 from pokesim.rl_utils import EntropySchedule, SGDTowardsModel, v_trace, _player_others
 from pokesim.config import RNaDConfig
 
@@ -125,8 +125,15 @@ def get_loss_nerd(
     return sum(loss_pi_list)
 
 
+def _print_params(model: nn.Module):
+    params_count = sum(x.numel() for x in model.parameters() if x.requires_grad)
+    print(f"""Total Params: {params_count:,}""")
+
+
 class Learner:
-    def __init__(self, config: RNaDConfig = RNaDConfig()):
+    def __init__(
+        self, init: Mapping[str, Any] = None, config: RNaDConfig = RNaDConfig()
+    ):
         self.config = config
         self._entropy_schedule = EntropySchedule(
             sizes=self.config.entropy_schedule_size,
@@ -135,6 +142,8 @@ class Learner:
 
         # Create initial parameters.
         self.params = Model()
+        if init is not None:
+            self.params.load_state_dict(init)
         self.params_actor = deepcopy(self.params).share_memory()
         self.params_target = deepcopy(self.params)
         self.params_prev = deepcopy(self.params)
@@ -156,6 +165,7 @@ class Learner:
             self.params_target, self.params, self.config.target_network_avg
         )
         self.learner_steps = 0
+        _print_params(self.params)
 
     def _to_torch(self, arr: np.ndarray, device: str = None):
         if device is None:
@@ -166,11 +176,28 @@ class Learner:
         obs = {k: self._to_torch(t) for k, t in preprocess(batch.raw_obs).items()}
         mask = self._to_torch(batch.legal.astype(np.bool_))
 
+        # t_callback = lambda t: t.to("cuda", non_blocking=True)
+
+        # pi, v, log_pi, logit = optimized_forward(
+        #     self.params, {**obs, "mask": mask}, t_callback
+        # )
+        # with torch.no_grad():
+        #     _, v_target, _, _ = optimized_forward(
+        #         self.params_target, {**obs, "mask": mask}, t_callback
+        #     )
+        #     _, _, log_pi_prev, _ = optimized_forward(
+        #         self.params_prev, {**obs, "mask": mask}, t_callback
+        #     )
+        #     _, _, log_pi_prev_, _ = optimized_forward(
+        #         self.params_prev_, {**obs, "mask": mask}, t_callback
+        #     )
+
         pi, v, log_pi, logit = self.params(**obs, mask=mask)
         with torch.no_grad():
             _, v_target, _, _ = self.params_target(**obs, mask=mask)
             _, _, log_pi_prev, _ = self.params_prev(**obs, mask=mask)
             _, _, log_pi_prev_, _ = self.params_prev_(**obs, mask=mask)
+
         # This line creates the reward transform log(pi(a|x)/pi_reg(a|x)).
         # For the stability reasons, reward changes smoothly between iterations.
         # The mixing between old and new reward transform is a convex combination
@@ -231,12 +258,17 @@ class Learner:
             clip=self.config.nerd.clip,
             threshold=self.config.nerd.beta,
         )
-        return loss_v + loss_nerd  # pytype: disable=bad-return-type  # numpy-scalars
+        loss = loss_v + loss_nerd
+        return loss
 
     def update_parameters(self, batch: Batch, alpha: float, update_target_net: bool):
         """A jitted pure-functional part of the `step`."""
 
         loss_val = self.loss(batch, alpha)
+
+        if loss_val.item() > 5:
+            batch.save(f"debug/{self.learner_steps}-batch.bt")
+
         loss_val.backward()
 
         nn.utils.clip_grad.clip_grad_value_(

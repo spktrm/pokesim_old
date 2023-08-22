@@ -23,7 +23,7 @@ class RNaDConfig:
     learner_device = "cuda"
 
     # The batch size to use when learning/improving parameters.
-    batch_size: int = 4
+    batch_size: int = 8
     # The learning rate for `params`.
     learning_rate: float = 0.00005
     # The config related to the ADAM optimizer used for updating `params`.
