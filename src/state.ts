@@ -49,16 +49,17 @@ function getPublicPokemon(pokemon: AnyObject, active: boolean) {
             getMappingValue(pokemon, moveMapping, pokemon.moves[i]),
         );
     }
-    return [
+    const out = [
         getMappingValue(pokemon, pokemonMapping, formatKey(pokemon.name)),
         getMappingValue(pokemon, itemMapping, pokemon.item),
         getMappingValue(pokemon, abilityMapping, pokemon.ability),
-        Math.floor(10 * pokemon.hp),
+        Math.floor(1000 * (pokemon.hp / pokemon.maxhp)),
         active ? 1 : 0,
         pokemon.fainted ? 1 : 0,
         statusMapping[pokemon.status] ?? -1,
         ...moveTokens,
     ];
+    return out;
 }
 
 function getPrivatePokemon(pokemon: AnyObject) {
@@ -68,7 +69,7 @@ function getPrivatePokemon(pokemon: AnyObject) {
             getMappingValue(pokemon, moveMapping, pokemon.moves[i]),
         );
     }
-    return [
+    const out = [
         getMappingValue(pokemon, pokemonMapping, formatKey(pokemon.name)),
         getMappingValue(pokemon, itemMapping, pokemon.item),
         getMappingValue(pokemon, abilityMapping, pokemon.ability),
@@ -78,6 +79,7 @@ function getPrivatePokemon(pokemon: AnyObject) {
         statusMapping[pokemon.status] ?? -1,
         ...moveTokens,
     ];
+    return out;
 }
 
 function binaryArrayToNumber(binArray: number[]): number {

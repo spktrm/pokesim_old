@@ -5,6 +5,9 @@ import { Generations } from "@pkmn/data";
 import { Game } from "./game";
 import { Uint16State } from "./state";
 
+import * as fs from "fs";
+import { v4 } from "uuid";
+
 export function isActionRequired(chunk: string, request: AnyObject): boolean {
     if (request == null) {
         return false;
@@ -112,50 +115,54 @@ export class Player {
             ...Uint16State.getBoosts(this.room.p2.active),
             ...Uint16State.getField(this.room.field),
             ...legalMask,
+            2570, // \n\n in ascii hex
         ]);
         const buf = Buffer.from(arr.buffer);
         return buf;
     }
     receive(chunk: string): boolean {
-        const err = false;
         if (chunk.startsWith("|error")) {
-            // console.log(chunk);
-            return true;
+            throw Error(chunk);
         }
         for (const line of chunk.split("\n")) {
             this.room.add(line);
         }
         return isActionRequired(chunk, this.room.request);
     }
-    async pipeTo(
-        outStream: WriteStream,
-        options: {
-            noEnd?: boolean;
-        } = {}
-    ) {
+    async pipeTo(outStream: WriteStream) {
         let value: string | string[], done: any, act: boolean, state: Buffer;
+
+        const debugLog = [];
+
         while ((({ value, done } = await this.stream.next()), !done)) {
-            act = this.receive(value);
-            if (act) {
-                state = this.getState();
-                if (this.debug) {
-                    await outStream.write(state);
-                    this.stream.write(
-                        randomAction(
-                            Uint16State.getLegalMask(
-                                this.room.request,
-                                this.done
+            if (this.debug) {
+                debugLog.push(value);
+            }
+            try {
+                act = this.receive(value);
+                if (act) {
+                    state = this.getState();
+                    if (this.debug) {
+                        await outStream.write(state);
+                        await this.stream.write(
+                            randomAction(
+                                Uint16State.getLegalMask(
+                                    this.room.request,
+                                    this.done
+                                )
                             )
-                        )
-                    );
-                } else {
-                    await outStream.write(state);
+                        );
+                    } else {
+                        await outStream.write(state);
+                    }
                 }
+            } catch (err) {
+                fs.writeFileSync(`debug/${v4()}.log`, debugLog.join("\n"));
             }
         }
         state = this.getState();
         await outStream.write(state);
-        if (!options.noEnd) return outStream.writeEnd();
+        return outStream.writeEnd();
     }
     destroy() {
         this.stream.destroy();

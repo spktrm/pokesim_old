@@ -1,5 +1,6 @@
 import numpy as np
 
+import pickle
 import msgpack
 import msgpack_numpy as m
 
@@ -7,6 +8,8 @@ from typing import List, Dict, NamedTuple
 
 from pokesim.utils import get_arr
 from pokesim.types import TensorType
+
+_r = lambda arr: arr.reshape(1, 1, -1)
 
 
 class EnvStep(NamedTuple):
@@ -18,9 +21,27 @@ class EnvStep(NamedTuple):
     legal: np.ndarray
 
     @classmethod
+    def from_stack(cls, env_steps: List["EnvStep"], pad_depth: int = 8):
+        latest = env_steps[-1]
+        stacked = np.stack([step.raw_obs for step in env_steps], axis=2)
+        if stacked.shape[2] < pad_depth:
+            pad_shape = list(stacked.shape)
+            pad_shape[2] = 8 - stacked.shape[2]
+            stacked = np.concatenate(
+                (np.zeros(shape=pad_shape, dtype=stacked.dtype), stacked), axis=2
+            )
+        return cls(
+            game_id=latest.game_id,
+            player_id=latest.player_id,
+            raw_obs=stacked,
+            rewards=latest.rewards,
+            valid=latest.valid,
+            legal=latest.legal,
+        )
+
+    @classmethod
     def from_data(cls, data: bytes) -> "EnvStep":
-        _r = lambda arr: arr.reshape(1, 1, -1)
-        state = _r(get_arr(data))
+        state = _r(get_arr(data[:-2]))
         legal = state[..., -10:].astype(bool)
         valid = (1 - state[..., 3]).astype(bool)
         player_id = state[..., 2]
@@ -95,6 +116,20 @@ class Trajectory(NamedTuple):
     policy: TensorType
     action: TensorType
 
+    def save(self, fpath: str):
+        print(f"Saving `{fpath}`")
+        with open(fpath, "wb") as f:
+            f.write(pickle.dumps(self.serialize()))
+
+    @classmethod
+    def load(cls, fpath: str):
+        with open(fpath, "rb") as f:
+            data = pickle.loads(f.read())
+        return Trajectory.deserialize(data)
+
+    def is_valid(self):
+        return self.valid.sum() > 0
+
     @classmethod
     def from_env_steps(cls, traj: List[TimeStep]) -> "Trajectory":
         actor_fields = {"policy", "action"}
@@ -134,11 +169,13 @@ class Batch(Trajectory):
         data = {
             key: np.concatenate(
                 [np.resize(sv, (max_size, *sv.shape[1:])) for sv in value], axis=1
-            )
+            )[:128]
             for key, value in store.items()
         }
-        data["valid"] = np.arange(data["valid"].shape[0])[:, None] < np.argmax(
-            data["valid"] == False, 0
-        )
+        arange = np.arange(data["valid"].shape[0])[:, None]
+        amax = np.argmax(data["valid"] == False, 0)
+        data["valid"] = arange < amax
         data["rewards"][:-1] = data["rewards"][1:]
+        _rewards_prev = data["rewards"]
+        data["rewards"] = _rewards_prev * (arange == (amax - 1))[..., None]
         return cls(**data)

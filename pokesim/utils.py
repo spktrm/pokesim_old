@@ -1,5 +1,10 @@
+import math
 import torch
+import torch.nn as nn
+
 import numpy as np
+
+from typing import Dict, Callable
 
 from pokesim.types import TensorDict
 from pokesim.constants import (
@@ -23,8 +28,8 @@ def unpackbits(x: np.ndarray, num_bits: int):
 
 
 def preprocess(obs: torch.Tensor) -> TensorDict:
-    T, B, *_ = leading_dims = obs.shape
-    leading_dims = (T, B)
+    T, B, H, *_ = leading_dims = obs.shape
+    leading_dims = (T, B, H)
     reshape_args = (*leading_dims, _NUM_PLAYERS, _NUM_ACTIVE, -1)
 
     volatile_status = obs[..., _VOLAILTE_OFFSET:_BOOSTS_OFFSET].reshape(
@@ -55,3 +60,26 @@ def get_arr(data) -> np.ndarray:
     arr = np.frombuffer(data, dtype=np.short)
     arr.setflags(write=False)
     return arr
+
+
+def optimized_forward(
+    module: nn.Module,
+    inputs: Dict[str, torch.Tensor],
+    t_callback: Callable,
+    batch_size: int = 1024,
+):
+    results = []
+
+    first_key = next(iter(inputs.keys()))
+    T, B, *_ = inputs[first_key].shape
+
+    inputs = {k: v.view(T * B, 1, *v.shape[2:]) for k, v in inputs.items()}
+
+    for i in range(math.ceil(T * B / batch_size)):
+        minibatch = {
+            k: t_callback(v[i * batch_size : (i + 1) * batch_size])
+            for k, v in inputs.items()
+        }
+        results.append(module(**minibatch))
+
+    return tuple(map(lambda x: torch.cat(x).view(T, B, -1), zip(*results)))
