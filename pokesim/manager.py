@@ -23,17 +23,22 @@ class Manager:
     async def run(self, progress_queue: mp.Queue, learn_queue: mp.Queue = None):
         traj = {}
         dones = {}
+        hist = {
+            0: [],
+            1: [],
+        }
 
+        actor: Actor
         while True:
             data = await self.process.stdout.readuntil(b"\n\n")
 
             env_step = EnvStep.from_data(data)
 
-            if env_step.player_id == 0:
-                actor = self.actor1
+            player_id = env_step.player_id.item()
 
-            elif env_step.player_id == 1:
-                actor = self.actor2
+            actor = getattr(self, f"actor{player_id + 1}")
+            hist[player_id].append(env_step)
+            env_step = EnvStep.from_stack(hist[player_id][-8:])
 
             policy_fn = actor._choose_action
 
@@ -80,3 +85,7 @@ class Manager:
                 progress_queue.put(len(traj[game_id]))
                 dones[game_id] = 0
                 traj[game_id] = []
+                hist = {
+                    0: [],
+                    1: [],
+                }

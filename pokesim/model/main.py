@@ -77,10 +77,26 @@ class Model(nn.Module):
         # self.state_lin = _layer_init(nn.Linear(5 * size, 5 * size))
         # self.gate_lin = _layer_init(nn.Linear(5 * size, 5 * size))
 
-        self.denom = math.sqrt(size)
+        self.coeff = 1 / math.sqrt(size)
 
-        self.torso = nn.Sequential(*[ResBlock(size) for _ in range(2)])
+        self.torso1 = nn.Sequential(*[ResBlock(size) for _ in range(2)])
+        self.torso2 = nn.Sequential(
+            nn.ReLU(),
+            nn.Conv1d(8, 32, 3, 2),
+            nn.MaxPool1d(2),
+            nn.ReLU(),
+            nn.Conv1d(32, 64, 3, 2),
+            nn.MaxPool1d(2),
+        )
+        self.key = _layer_init(nn.Linear(960, size))
+        self.queries = nn.Sequential(
+            _layer_init(nn.Linear(size, size)),
+            nn.ReLU(),
+            _layer_init(nn.Linear(size, size)),
+        )
         self.value = nn.Sequential(
+            nn.ReLU(),
+            _layer_init(nn.Linear(960, size)),
             ResBlock(size),
             ResBlock(size),
             nn.ReLU(),
@@ -96,7 +112,7 @@ class Model(nn.Module):
         field: torch.Tensor,
         mask: torch.Tensor,
     ):
-        T, B, *_ = mask.shape
+        T, B, H, *_ = teams.shape
 
         teams_ = teams + 1
         species_token = teams_[..., 0]
@@ -128,10 +144,10 @@ class Model(nn.Module):
             dim=-1,
         )
         entities_embedding = self.ee1(entity_embedding)
-        side_embedding = self.ee2(entities_embedding.max(-2).values.flatten(2))
-        boosts_embedding = self.boosts_embedding(boosts.flatten(2) / 6)
+        side_embedding = self.ee2(entities_embedding.max(-2).values.flatten(3))
+        boosts_embedding = self.boosts_embedding(boosts.flatten(3) / 6)
 
-        pseudoweather = field[..., :9].view(T, B, 3, 3)
+        pseudoweather = field[..., :9].view(T, B, H, 3, 3)
         pseudoweather_tokens = pseudoweather[..., 0]
         psuedoweather_onehot = self.pseudoweather_onehot(pseudoweather_tokens).sum(-2)
         weather_onehot = self.weather_onehot(field[..., 10])
@@ -143,12 +159,12 @@ class Model(nn.Module):
         field_embedding = self.field_embedding(field_onehot)
 
         volatile_onehot = (
-            self.volatile_onehot(volatile_status[..., 0, :]).sum(-2).flatten(2)
+            self.volatile_onehot(volatile_status[..., 0, :]).sum(-2).flatten(3)
         )
         volatile_embedding = self.volatile_embedding(volatile_onehot)
 
         sidecon_onehot = (
-            self.sidecon_onehot((side_conditions > 0).to(torch.long)).sum(-2).flatten(2)
+            self.sidecon_onehot((side_conditions > 0).to(torch.long)).sum(-2).flatten(3)
         )
         sidecon_embedding = self.sidecon_embedding(sidecon_onehot)
 
@@ -178,19 +194,15 @@ class Model(nn.Module):
             + sidecon_embedding
         )
 
-        state_embedding = self.torso(state_embedding)
+        state_embedding = self.torso2(state_embedding.flatten(0, 1)).view(T, B, -1)
 
-        switch_embeddings = entities_embedding[..., 0, :6, :]
-        move_embeddings = self.move_embeddings(move_tokens[..., 0, 0, :])
+        switch_embeddings = entities_embedding[..., -1, 0, :6, :]
+        move_embeddings = self.move_embeddings(move_tokens[..., -1, 0, 0, :])
 
         key = state_embedding.unsqueeze(-2)
-        logits = torch.cat(
-            (
-                key @ move_embeddings.transpose(-2, -1),
-                key @ switch_embeddings.transpose(-2, -1),
-            ),
-            dim=-1,
-        ).squeeze(-2)
+        queries = torch.cat((move_embeddings, switch_embeddings), dim=-2)
+        logits = (self.key(key) @ self.queries(queries).transpose(-2, -1)).squeeze(-2)
+        logits *= self.coeff
 
         value = self.value(state_embedding)
         policy = _legal_policy(logits, mask)

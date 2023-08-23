@@ -145,8 +145,8 @@ def learn(learner: Learner, queue: mp.Queue):
 
 
 def main():
-    # init = torch.load("ckpts/ckpt-35000.pt")
     init = None
+    # init = torch.load("ckpts/ckpt-90000.pt")
     learner = Learner(init)
 
     if not _DEBUG:

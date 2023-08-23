@@ -21,6 +21,25 @@ class EnvStep(NamedTuple):
     legal: np.ndarray
 
     @classmethod
+    def from_stack(cls, env_steps: List["EnvStep"], pad_depth: int = 8):
+        latest = env_steps[-1]
+        stacked = np.stack([step.raw_obs for step in env_steps], axis=2)
+        if stacked.shape[2] < pad_depth:
+            pad_shape = list(stacked.shape)
+            pad_shape[2] = 8 - stacked.shape[2]
+            stacked = np.concatenate(
+                (np.zeros(shape=pad_shape, dtype=stacked.dtype), stacked), axis=2
+            )
+        return cls(
+            game_id=latest.game_id,
+            player_id=latest.player_id,
+            raw_obs=stacked,
+            rewards=latest.rewards,
+            valid=latest.valid,
+            legal=latest.legal,
+        )
+
+    @classmethod
     def from_data(cls, data: bytes) -> "EnvStep":
         state = _r(get_arr(data[:-2]))
         legal = state[..., -10:].astype(bool)
@@ -150,7 +169,7 @@ class Batch(Trajectory):
         data = {
             key: np.concatenate(
                 [np.resize(sv, (max_size, *sv.shape[1:])) for sv in value], axis=1
-            )[:256]
+            )[:128]
             for key, value in store.items()
         }
         arange = np.arange(data["valid"].shape[0])[:, None]

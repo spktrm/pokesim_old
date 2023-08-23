@@ -28,8 +28,8 @@ def unpackbits(x: np.ndarray, num_bits: int):
 
 
 def preprocess(obs: torch.Tensor) -> TensorDict:
-    T, B, *_ = leading_dims = obs.shape
-    leading_dims = (T, B)
+    T, B, H, *_ = leading_dims = obs.shape
+    leading_dims = (T, B, H)
     reshape_args = (*leading_dims, _NUM_PLAYERS, _NUM_ACTIVE, -1)
 
     volatile_status = obs[..., _VOLAILTE_OFFSET:_BOOSTS_OFFSET].reshape(
