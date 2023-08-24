@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 
 import torch
@@ -21,8 +23,7 @@ def get_loss_v_(
     mask: torch.Tensor,
 ) -> torch.Tensor:
     loss_v = torch.unsqueeze(mask, dim=-1) * (v_n - torch.detach(v_target)) ** 2
-    normalization = torch.sum(mask)
-    loss_v = torch.sum(loss_v) / torch.clamp(normalization, min=1)
+    loss_v = torch.sum(loss_v)
     return loss_v
 
 
@@ -36,7 +37,7 @@ def get_loss_v(
     for v_n, v_target, mask in zip(v_list, v_target_list, mask_list):
         loss_v = get_loss_v_(v_n, v_target, mask)
         loss_v_list.append(loss_v)
-    return sum(loss_v_list)
+    return loss_v_list
 
 
 def apply_force_with_threshold(
@@ -57,8 +58,7 @@ def apply_force_with_threshold(
 def renormalize(loss: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """The `normalization` is the number of steps over which loss is computed."""
     loss = torch.sum(loss * mask)
-    normalization = torch.sum(mask)
-    return loss / torch.clamp(normalization, min=1)
+    return loss
 
 
 def get_loss_nerd_(
@@ -122,7 +122,7 @@ def get_loss_nerd(
             threshold,
         )
         loss_pi_list.append(nerd_loss)
-    return sum(loss_pi_list)
+    return loss_pi_list
 
 
 def _print_params(model: nn.Module):
@@ -172,31 +172,26 @@ class Learner:
             device = self.config.learner_device
         return torch.from_numpy(arr).to(device, non_blocking=True)
 
-    def loss(self, batch: Batch, alpha: float) -> torch.Tensor:
-        obs = {k: self._to_torch(t) for k, t in preprocess(batch.raw_obs).items()}
-        mask = self._to_torch(batch.legal.astype(np.bool_))
+    def loss(self, batch: Batch, alpha: float) -> float:
+        obs = {k: torch.from_numpy(t) for k, t in preprocess(batch.raw_obs).items()}
+        mask = torch.from_numpy(batch.legal.astype(np.bool_))
 
-        # t_callback = lambda t: t.to("cuda", non_blocking=True)
+        t_callback = lambda t: t.to("cuda", non_blocking=True)
 
-        # pi, v, log_pi, logit = optimized_forward(
-        #     self.params, {**obs, "mask": mask}, t_callback
-        # )
-        # with torch.no_grad():
-        #     _, v_target, _, _ = optimized_forward(
-        #         self.params_target, {**obs, "mask": mask}, t_callback
-        #     )
-        #     _, _, log_pi_prev, _ = optimized_forward(
-        #         self.params_prev, {**obs, "mask": mask}, t_callback
-        #     )
-        #     _, _, log_pi_prev_, _ = optimized_forward(
-        #         self.params_prev_, {**obs, "mask": mask}, t_callback
-        #     )
-
-        pi, v, log_pi, logit = self.params(**obs, mask=mask)
+        forward_batch = {**obs, "mask": mask}
         with torch.no_grad():
-            _, v_target, _, _ = self.params_target(**obs, mask=mask)
-            _, _, log_pi_prev, _ = self.params_prev(**obs, mask=mask)
-            _, _, log_pi_prev_, _ = self.params_prev_(**obs, mask=mask)
+            pi, v, log_pi, logit = optimized_forward(
+                self.params, forward_batch, t_callback
+            )
+            _, v_target, _, _ = optimized_forward(
+                self.params_target, forward_batch, t_callback
+            )
+            _, _, log_pi_prev, _ = optimized_forward(
+                self.params_prev, forward_batch, t_callback
+            )
+            _, _, log_pi_prev_, _ = optimized_forward(
+                self.params_prev_, forward_batch, t_callback
+            )
 
         # This line creates the reward transform log(pi(a|x)/pi_reg(a|x)).
         # For the stability reasons, reward changes smoothly between iterations.
@@ -242,34 +237,66 @@ class Learner:
             has_played_list.append(has_played)
             v_trace_policy_target_list.append(policy_target_)
 
-        loss_v = get_loss_v([v] * _NUM_PLAYERS, v_target_list, has_played_list)
+        T, B = batch.valid.shape
+        size = T * B
+        num = math.ceil(size / 1024)
+        bs = T // num
 
         is_vector = torch.unsqueeze(valid, axis=-1)
         importance_sampling_correction = [is_vector] * _NUM_PLAYERS
-        # Uses v-trace to define q-values for Nerd
-        loss_nerd = get_loss_nerd(
-            [logit] * _NUM_PLAYERS,
-            [pi] * _NUM_PLAYERS,
-            v_trace_policy_target_list,
-            valid,
-            player_id,
-            legal,
-            importance_sampling_correction,
-            clip=self.config.nerd.clip,
-            threshold=self.config.nerd.beta,
-        )
-        loss = loss_v + loss_nerd
-        return loss
+
+        has_played_p1 = has_played_list[0].sum()
+        has_played_p2 = has_played_list[1].sum()
+
+        policy_target_norm_p1 = (valid * (player_id == 0)).sum()
+        policy_target_norm_p2 = (valid * (player_id == 1)).sum()
+
+        t_loss = 0
+
+        for i in range(num):
+            s, f = bs * i, bs * (i + 1)
+            pi, v, _, logit = self.params(
+                **{k: t_callback(v[s:f]) for k, v in forward_batch.items()}
+            )
+
+            loss = 0
+
+            loss_v = get_loss_v(
+                [v] * _NUM_PLAYERS,
+                [v_target[s:f] for v_target in v_target_list],
+                [has_played[s:f] for has_played in has_played_list],
+            )
+            loss += loss_v[0] / has_played_p1
+            loss += loss_v[1] / has_played_p2
+
+            # Uses v-trace to define q-values for Nerd
+            loss_nerd = get_loss_nerd(
+                [logit] * _NUM_PLAYERS,
+                [pi] * _NUM_PLAYERS,
+                [vtpt[s:f] for vtpt in v_trace_policy_target_list],
+                valid[s:f],
+                player_id[s:f],
+                legal[s:f],
+                [isc[s:f] for isc in importance_sampling_correction],
+                clip=self.config.nerd.clip,
+                threshold=self.config.nerd.beta,
+            )
+            loss += loss_nerd[0] / policy_target_norm_p1
+            loss += loss_nerd[1] / policy_target_norm_p2
+
+            loss.backward()
+
+            t_loss += loss.item()
+
+        return t_loss
 
     def update_parameters(self, batch: Batch, alpha: float, update_target_net: bool):
         """A jitted pure-functional part of the `step`."""
 
         loss_val = self.loss(batch, alpha)
 
-        if loss_val.item() > 5:
+        if loss_val > 5:
             batch.save(f"debug/{self.learner_steps}-batch.bt")
-
-        loss_val.backward()
 
         nn.utils.clip_grad.clip_grad_value_(
             self.params.parameters(), self.config.clip_gradient
@@ -295,6 +322,6 @@ class Learner:
 
         logs = {
             "loss": loss_val,
-            "draw_ratio": draw_ratio,
+            "draw_ratio": draw_ratio.item(),
         }
         return logs

@@ -126,7 +126,6 @@ def learn(learner: Learner, queue: mp.Queue):
         alpha, update_target_net = learner._entropy_schedule(learner.learner_steps)
         logs = learner.update_parameters(batch, alpha, update_target_net)
 
-        logs = {k: v.item() for k, v in logs.items()}
         learner.learner_steps += 1
 
         logs["avg_length"] = batch.valid.sum(0).mean()

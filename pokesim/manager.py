@@ -3,7 +3,7 @@ import multiprocessing as mp
 
 from pokesim.structs import EnvStep, TimeStep, Trajectory
 from pokesim.actor import Actor, Action, EvalActor
-from pokesim.constants import _STATE_BYTES
+from pokesim.constants import _STATE_BYTES, _NUM_HISTORY
 
 
 class Manager:
@@ -38,7 +38,7 @@ class Manager:
 
             actor = getattr(self, f"actor{player_id + 1}")
             hist[player_id].append(env_step)
-            env_step = EnvStep.from_stack(hist[player_id][-8:])
+            env_step = EnvStep.from_stack(hist[player_id][-_NUM_HISTORY:])
 
             policy_fn = actor._choose_action
 

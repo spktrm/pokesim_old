@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from pokesim.structs import ModelOutput
 from pokesim.rl_utils import _legal_log_policy, _legal_policy
 from pokesim.model.embedding import EntityEmbedding
+from pokesim.constants import _NUM_HISTORY
 
 
 def _layer_init(
@@ -50,19 +51,11 @@ class Model(nn.Module):
         self.fainted_onehot = nn.Embedding.from_pretrained(torch.eye(2))
         self.status_onehot = nn.Embedding.from_pretrained(torch.eye(7))
 
-        self.boosts_embedding = _layer_init(nn.Linear(2 * 7, size, bias=False))
-
         self.pseudoweather_onehot = nn.Embedding.from_pretrained(torch.eye(9)[..., 1:])
         self.weather_onehot = nn.Embedding.from_pretrained(torch.eye(9))
         self.terrain_onehot = nn.Embedding.from_pretrained(torch.eye(6))
-
-        self.field_embedding = _layer_init(nn.Linear(8 + 9 + 6, size, bias=False))
-
         self.sidecon_onehot = nn.Embedding.from_pretrained(torch.eye(16)[..., 1:])
-        self.sidecon_embedding = _layer_init(nn.Linear(2 * 15, size, bias=False))
-
         self.volatile_onehot = nn.Embedding.from_pretrained(torch.eye(106)[..., 1:])
-        self.volatile_embedding = _layer_init(nn.Linear(2 * 105, size, bias=False))
 
         self.ee1 = nn.Sequential(
             _layer_init(nn.Linear(888, size, bias=False)),
@@ -74,31 +67,32 @@ class Model(nn.Module):
             _layer_init(nn.Linear(3 * size, size, bias=False)),
         )
 
-        # self.state_lin = _layer_init(nn.Linear(5 * size, 5 * size))
-        # self.gate_lin = _layer_init(nn.Linear(5 * size, 5 * size))
+        self.context_embedding = _layer_init(
+            nn.Linear(2 * 7 + 8 + 9 + 6 + 2 * 15 + 2 * 105, size)
+        )
 
         self.coeff = 1 / math.sqrt(size)
 
         self.torso1 = nn.Sequential(*[ResBlock(size) for _ in range(2)])
         self.torso2 = nn.Sequential(
             nn.ReLU(),
-            nn.Conv1d(8, 32, 3, 2),
+            nn.Conv1d(_NUM_HISTORY, 32, 3, 2, bias=False),
             nn.MaxPool1d(2),
             nn.ReLU(),
-            nn.Conv1d(32, 64, 3, 2),
+            nn.Conv1d(32, 64, 3, 2, bias=False),
             nn.MaxPool1d(2),
         )
-        self.key = _layer_init(nn.Linear(960, size))
+        self.torso3 = nn.Sequential(
+            nn.ReLU(),
+            _layer_init(nn.Linear(960, size)),
+        )
         self.queries = nn.Sequential(
+            nn.ReLU(),
             _layer_init(nn.Linear(size, size)),
             nn.ReLU(),
             _layer_init(nn.Linear(size, size)),
         )
         self.value = nn.Sequential(
-            nn.ReLU(),
-            _layer_init(nn.Linear(960, size)),
-            ResBlock(size),
-            ResBlock(size),
             nn.ReLU(),
             _layer_init(nn.Linear(size, 1)),
         )
@@ -145,7 +139,6 @@ class Model(nn.Module):
         )
         entities_embedding = self.ee1(entity_embedding)
         side_embedding = self.ee2(entities_embedding.max(-2).values.flatten(3))
-        boosts_embedding = self.boosts_embedding(boosts.flatten(3) / 6)
 
         pseudoweather = field[..., :9].view(T, B, H, 3, 3)
         pseudoweather_tokens = pseudoweather[..., 0]
@@ -153,55 +146,34 @@ class Model(nn.Module):
         weather_onehot = self.weather_onehot(field[..., 10])
         terrain_onehot = self.terrain_onehot(field[..., 13])
 
-        field_onehot = torch.cat(
-            (psuedoweather_onehot, weather_onehot, terrain_onehot), dim=-1
-        )
-        field_embedding = self.field_embedding(field_onehot)
-
-        volatile_onehot = (
-            self.volatile_onehot(volatile_status[..., 0, :]).sum(-2).flatten(3)
-        )
-        volatile_embedding = self.volatile_embedding(volatile_onehot)
-
-        sidecon_onehot = (
-            self.sidecon_onehot((side_conditions > 0).to(torch.long)).sum(-2).flatten(3)
-        )
-        sidecon_embedding = self.sidecon_embedding(sidecon_onehot)
-
-        # state_embedding = torch.stack(
-        #     (
-        #         side_embedding,
-        #         boosts_embedding,
-        #         field_embedding,
-        #         volatile_embedding,
-        #         sidecon_embedding,
-        #     ),
-        #     dim=-2,
-        # )
-        # shape = state_embedding.shape
-        # flat_state = state_embedding.flatten(-2)
-        # state_embedding = self.state_lin(flat_state).view(*shape)
-        # gate = self.gate_lin(flat_state).view(*shape)
-        # gate = gate.softmax(-2)
-
-        # state_embedding = (state_embedding * gate).sum(-2)
-
-        state_embedding = (
-            side_embedding
-            + boosts_embedding
-            + field_embedding
-            + volatile_embedding
-            + sidecon_embedding
+        context_onehot = torch.cat(
+            (
+                boosts.flatten(3) / 6,
+                psuedoweather_onehot,
+                weather_onehot,
+                terrain_onehot,
+                self.volatile_onehot(volatile_status[..., 0, :]).sum(-2).flatten(3),
+                self.sidecon_onehot((side_conditions > 0).to(torch.long))
+                .sum(-2)
+                .flatten(3),
+            ),
+            dim=-1,
         )
 
+        context_embedding = self.context_embedding(context_onehot)
+        state_embedding = side_embedding + context_embedding
+
+        hist_mask = (teams.flatten(3).sum(-1) != 0).unsqueeze(-1)
+        state_embedding = self.torso1(state_embedding) * hist_mask
         state_embedding = self.torso2(state_embedding.flatten(0, 1)).view(T, B, -1)
+        state_embedding = self.torso3(state_embedding)
 
         switch_embeddings = entities_embedding[..., -1, 0, :6, :]
         move_embeddings = self.move_embeddings(move_tokens[..., -1, 0, 0, :])
 
         key = state_embedding.unsqueeze(-2)
         queries = torch.cat((move_embeddings, switch_embeddings), dim=-2)
-        logits = (self.key(key) @ self.queries(queries).transpose(-2, -1)).squeeze(-2)
+        logits = (key @ self.queries(queries).transpose(-2, -1)).squeeze(-2)
         logits *= self.coeff
 
         value = self.value(state_embedding)
