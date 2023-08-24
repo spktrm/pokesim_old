@@ -31,12 +31,12 @@ class RNaDConfig:
     # All gradients values are clipped to [-clip_gradient, clip_gradient].
     clip_gradient: float = 10_000
     # The "speed" at which `params_target` is following `params`.
-    target_network_avg: float = 0.01
+    target_network_avg: float = 0.001
 
     # RNaD algorithm configuration.
     # Entropy schedule configuration. See EntropySchedule class documentation.
     entropy_schedule_repeats: List[int] = (1,)
-    entropy_schedule_size: List[int] = (10_0,)
+    entropy_schedule_size: List[int] = (10_00,)
     # The weight of the reward regularisation term in RNaD.
     eta_reward_transform: float = 0.2
     nerd: NerdConfig = NerdConfig()

@@ -11,7 +11,7 @@ def main(args):
     api = wandb.Api()
     run = api.run(args.run_id)
     df = run.history(samples=200000)
-    y = df["r"].dropna().rolling(100).mean()
+    y = df["r"].dropna().rolling(1000).mean()
     x = np.arange(len(y))
 
     fig = go.Figure(data=go.Scatter(x=x, y=(y - 1) / -2))

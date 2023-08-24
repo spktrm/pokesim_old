@@ -153,7 +153,7 @@ def main():
             # set the wandb project where this run will be logged
             project="meloettav2",
             # track hyperparameters and run metadata
-            config=learner.config,
+            config=learner.config.__dict__,
         )
 
     progress_queue = mp.Queue()
