@@ -31,9 +31,15 @@ class EntityEmbedding(nn.Module):
     def __init__(self):
         super().__init__()
 
-        moves_df = pd.read_csv("./dist/src/moves.csv", index_col="species")
-        abilities_df = pd.read_csv("./dist/src/abilities.csv", index_col="species")
-        items_df = pd.read_csv("./dist/src/items.csv", index_col="species")
+        moves_df = pd.read_csv(
+            "./dist/src/gen9randombattle/moves.csv", index_col="species"
+        )
+        abilities_df = pd.read_csv(
+            "./dist/src/gen9randombattle/abilities.csv", index_col="species"
+        )
+        items_df = pd.read_csv(
+            "./dist/src/gen9randombattle/items.csv", index_col="species"
+        )
 
         abilities_init = abilities_df.values.astype(np.float32)
         items_init = items_df.values.astype(np.float32)

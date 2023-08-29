@@ -4,6 +4,7 @@ import asyncio
 
 import torch
 import numpy as np
+import multiprocessing as mp
 
 from abc import ABC, abstractmethod
 
@@ -11,7 +12,12 @@ from typing import Tuple
 
 from pokesim.utils import preprocess
 from pokesim.inference import Inference
-from pokesim.constants import _DEFAULT_ACTION, _LINE_FEED
+from pokesim.constants import (
+    _DEFAULT_ACTION,
+    _RANDOM_ACTION,
+    _MAXDMG_ACTION,
+    _LINE_FEED,
+)
 from pokesim.structs import EnvStep, ActorStep
 
 
@@ -29,6 +35,12 @@ class Action:
 
     def default(self):
         return self.select_action(_DEFAULT_ACTION)
+
+    def random(self):
+        return self.select_action(_RANDOM_ACTION)
+
+    def maxdmg(self):
+        return self.select_action(_MAXDMG_ACTION)
 
 
 class Actor(ABC):
@@ -77,21 +89,26 @@ class SelfplayActor(Actor):
 
 
 class EvalActor(Actor):
-    def __init__(self, eval_queue) -> None:
+    def __init__(self, pi_type: str, eval_queue: mp.Queue) -> None:
+        self.pi_type = pi_type
         self.eval_queue = eval_queue
-
-    async def choose_action(self, env_step: EnvStep) -> Tuple[Action, ActorStep]:
-        mask = torch.from_numpy(env_step.legal.astype(np.bool_))
-        policy = torch.masked_fill(
-            torch.zeros((10,)),
-            ~mask,
-            float("-inf"),
-        ).softmax(-1)
-        action = _get_action(policy)
-        return (
-            Action.from_env_step(env_step).select_action(action),
-            None,
-        )
+        self.n = 0
 
     def _done_callback(self, reward: int):
-        self.eval_queue.put((reward))
+        self.eval_queue.put((self.n, self.pi_type, reward))
+        self.n += 1
+
+
+class DefaultEvalActor(EvalActor):
+    async def choose_action(self, env_step: EnvStep) -> Tuple[Action, ActorStep]:
+        return (Action.from_env_step(env_step).default(), None)
+
+
+class RandomEvalActor(EvalActor):
+    async def choose_action(self, env_step: EnvStep) -> Tuple[Action, ActorStep]:
+        return (Action.from_env_step(env_step).random(), None)
+
+
+class MaxdmgEvalActor(EvalActor):
+    async def choose_action(self, env_step: EnvStep) -> Tuple[Action, ActorStep]:
+        return (Action.from_env_step(env_step).maxdmg(), None)

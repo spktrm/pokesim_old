@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 
 
@@ -18,6 +20,10 @@ def create_mapping_dataframe(json_data, key):
             for element in role_data.get(key, []):
                 row[to_id(element)] = 1
 
+        unique_elements.update(list(species_data[key]))
+        for element in species_data[key]:
+            row[to_id(element)] = 1
+
         mapping_data.append(row)
 
     # Create DataFrame with species as index and sorted columns
@@ -31,19 +37,24 @@ def create_mapping_dataframe(json_data, key):
 
 
 def main():
-    formatid = "gen9randombattle"
-    url = f"https://raw.githubusercontent.com/pkmn/randbats/main/data/{formatid}.json"
-    json_data = pd.read_json(url).transpose()
+    for gen in range(3, 10):
+        try:
+            formatid = f"gen{gen}randombattle"
+            url = f"https://raw.githubusercontent.com/pkmn/randbats/main/data/{formatid}.json"
+            json_data = pd.read_json(url).transpose()
 
-    # Create DataFrames for moves, items, and abilities
-    moves_df = create_mapping_dataframe(json_data, "moves")
-    items_df = create_mapping_dataframe(json_data, "items")
-    abilities_df = create_mapping_dataframe(json_data, "abilities")
+            # Create DataFrames for moves, items, and abilities
+            moves_df = create_mapping_dataframe(json_data, "moves")
+            items_df = create_mapping_dataframe(json_data, "items")
+            abilities_df = create_mapping_dataframe(json_data, "abilities")
 
-    # Save to CSV files
-    moves_df.to_csv("./src/moves.csv")
-    items_df.to_csv("./src/items.csv")
-    abilities_df.to_csv("./src/abilities.csv")
+            # Save to CSV files
+            os.makedirs(f"./src/{formatid}/", exist_ok=True)
+            moves_df.to_csv(f"./src/{formatid}/moves.csv")
+            items_df.to_csv(f"./src/{formatid}/items.csv")
+            abilities_df.to_csv(f"./src/{formatid}/abilities.csv")
+        except:
+            pass
 
 
 if __name__ == "__main__":

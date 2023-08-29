@@ -12,12 +12,18 @@ import torch.nn as nn
 import threading
 import multiprocessing as mp
 
-from typing import Iterator
+from typing import List, Iterator
 from tqdm import tqdm
 
+from pokesim.types import OpponentPolicy
 from pokesim.inference import Inference
 from pokesim.manager import Manager
-from pokesim.actor import SelfplayActor, EvalActor
+from pokesim.actor import (
+    SelfplayActor,
+    DefaultEvalActor,
+    RandomEvalActor,
+    MaxdmgEvalActor,
+)
 from pokesim.structs import Batch, Trajectory
 from pokesim.learner import Learner
 
@@ -26,8 +32,13 @@ _NUM_CPUS = 1 if _DEBUG else os.cpu_count()
 print(f"Running on `{_NUM_CPUS} Workers`")
 
 
-async def _eval(
-    worker_index: int, model: nn.Module, progress_queue: mp.Queue, eval_queue: mp.Queue
+async def _run_worker(
+    worker_index: int,
+    model: nn.Module,
+    progress_queue: mp.Queue,
+    queue: mp.Queue,
+    selfplay: bool = True,
+    opponent_pi: OpponentPolicy = None,
 ):
     inference = Inference(model, "cpu", batch_size=2)
     command = f"node ./sim.js {worker_index}"
@@ -39,51 +50,53 @@ async def _eval(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    manager = Manager(
-        worker_index=worker_index,
-        process=process,
-        actor1=SelfplayActor(inference),
-        actor2=EvalActor(eval_queue),
-    )
+    if selfplay:
+        opponent = SelfplayActor(inference)
 
-    await manager.run(progress_queue)
-
-
-def run_eval(
-    worker_index: int, model: nn.Module, progress_queue: mp.Queue, eval_queue: mp.Queue
-):
-    torch.set_grad_enabled(False)
-    asyncio.run(_eval(worker_index, model, progress_queue, eval_queue))
-
-
-async def _selfplay(
-    worker_index: int, model: nn.Module, progress_queue: mp.Queue, learn_queue: mp.Queue
-):
-    inference = Inference(model, "cpu", batch_size=2)
-    command = f"node ./sim.js {worker_index}"
-
-    process = await asyncio.create_subprocess_shell(
-        command,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    if opponent_pi is not None:
+        if opponent_pi == "default":
+            opponent = DefaultEvalActor(opponent_pi, queue)
+        elif opponent_pi == "maxdmg":
+            opponent = MaxdmgEvalActor(opponent_pi, queue)
+        elif opponent_pi == "random":
+            opponent = RandomEvalActor(opponent_pi, queue)
+        else:
+            raise ValueError
 
     manager = Manager(
         worker_index=worker_index,
         process=process,
         actor1=SelfplayActor(inference),
-        actor2=SelfplayActor(inference),
+        actor2=opponent,
     )
+
+    if selfplay:
+        learn_queue = queue
+    else:
+        learn_queue = None
 
     await manager.run(progress_queue, learn_queue)
 
 
-def run_selfplay(
-    worker_index: int, model: nn.Module, progress_queue: mp.Queue, learn_queue: mp.Queue
+def run_worker(
+    worker_index: int,
+    model: nn.Module,
+    progress_queue: mp.Queue,
+    learn_queue: mp.Queue,
+    selfplay: bool = True,
+    opponent_pi: OpponentPolicy = None,
 ):
     torch.set_grad_enabled(False)
-    asyncio.run(_selfplay(worker_index, model, progress_queue, learn_queue))
+    asyncio.run(
+        _run_worker(
+            worker_index,
+            model,
+            progress_queue,
+            learn_queue,
+            selfplay,
+            opponent_pi,
+        )
+    )
 
 
 def read_prog(progress_queue: mp.Queue):
@@ -96,12 +109,10 @@ def read_prog(progress_queue: mp.Queue):
 
 
 def read_eval(eval_queue: mp.Queue):
-    n = 0
     while True:
-        r = eval_queue.get()
+        n, o, r = eval_queue.get()
         if not _DEBUG:
-            wandb.log({"n": n, "r": r})
-        n += 1
+            wandb.log({f"{o}_n": n, f"{o}_r": r})
 
 
 def dataloader(queue: mp.Queue, batch_size: int = 16) -> Iterator[Batch]:
@@ -120,6 +131,7 @@ def dataloader(queue: mp.Queue, batch_size: int = 16) -> Iterator[Batch]:
 def learn(learner: Learner, queue: mp.Queue):
     progress = tqdm(desc="Learning")
     env_steps = 0
+
     for batch in dataloader(queue, learner.config.batch_size):
         env_steps += batch.valid.sum()
 
@@ -145,7 +157,7 @@ def learn(learner: Learner, queue: mp.Queue):
 
 def main():
     init = None
-    # init = torch.load("ckpts/ckpt-90000.pt")
+    # init = torch.load("ckpts/ckpt-37500.pt")
     learner = Learner(init)
 
     if not _DEBUG:
@@ -158,7 +170,7 @@ def main():
 
     progress_queue = mp.Queue()
     eval_queue = mp.Queue()
-    learn_queue = mp.Queue(maxsize=100)
+    learn_queue = mp.Queue(maxsize=learner.config.batch_size)
 
     progress_thread = threading.Thread(target=read_prog, args=(progress_queue,))
     progress_thread.start()
@@ -174,18 +186,31 @@ def main():
 
     uvloop.install()
 
-    procs = [
+    procs: List[mp.Process] = []
+    procs += [
         mp.Process(
-            target=run_selfplay,
-            args=(worker_index, learner.params_actor, progress_queue, learn_queue),
+            target=run_worker,
+            args=(
+                len(procs) + 1,
+                learner.params_actor,
+                progress_queue,
+                eval_queue,
+                False,
+                opponent_policy,
+            ),
         )
-        for worker_index in range(_NUM_CPUS - 1)
+        for opponent_policy in {
+            "default",
+            "random",
+            # "maxdmg",
+        }
     ]
     procs += [
         mp.Process(
-            target=run_eval,
-            args=(len(procs) + 1, learner.params_actor, progress_queue, eval_queue),
+            target=run_worker,
+            args=(worker_index, learner.params_actor, progress_queue, learn_queue),
         )
+        for worker_index in range(_NUM_CPUS - len(procs))
     ]
     for proc in procs:
         proc.start()

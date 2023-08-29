@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
+const formatid = "gen9randombattle";
 const data = fs.readFileSync("./src/data.json");
 const { sideConditions, weathers, pseudoWeather, terrain, volatileStatus } =
     JSON.parse(data.toString());
@@ -19,7 +20,7 @@ function listToEnumObj(arr: Array<any>): Object {
 
 const pokemonMapping = listToEnumObj(
     fs
-        .readFileSync(path.resolve(__dirname, "moves.csv"))
+        .readFileSync(path.resolve(__dirname, `${formatid}/moves.csv`))
         .toString()
         .split("\n")
         .map((x) => x.split(",")[0])
@@ -35,11 +36,17 @@ function readCsvHeaders(fpath: string): Array<string> {
         .split(",");
 }
 
-const itemMapping = listToEnumObj(readCsvHeaders("items.csv").slice(1));
+const itemMapping = listToEnumObj(
+    readCsvHeaders(`${formatid}/items.csv`).slice(1),
+);
 
-const moveMapping = listToEnumObj(readCsvHeaders("moves.csv").slice(1));
+const moveMapping = listToEnumObj(
+    readCsvHeaders(`${formatid}/moves.csv`).slice(1),
+);
 
-const abilityMapping = listToEnumObj(readCsvHeaders("abilities.csv").slice(1));
+const abilityMapping = listToEnumObj(
+    readCsvHeaders(`${formatid}/abilities.csv`).slice(1),
+);
 
 const sideConditionsMapping = sideConditions;
 

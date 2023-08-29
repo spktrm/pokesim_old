@@ -23,10 +23,7 @@ class Manager:
     async def run(self, progress_queue: mp.Queue, learn_queue: mp.Queue = None):
         traj = {}
         dones = {}
-        hist = {
-            0: [],
-            1: [],
-        }
+        hist = {0: [], 1: []}
 
         actor: Actor
         while True:
@@ -85,7 +82,4 @@ class Manager:
                 progress_queue.put(len(traj[game_id]))
                 dones[game_id] = 0
                 traj[game_id] = []
-                hist = {
-                    0: [],
-                    1: [],
-                }
+                hist = {0: [], 1: []}

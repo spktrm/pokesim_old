@@ -7,9 +7,10 @@ import { Uint16State } from "./state";
 
 import * as fs from "fs";
 import { v4 } from "uuid";
+import { getRandomAction } from "./sim";
 
 export function isActionRequired(chunk: string, request: AnyObject): boolean {
-    if (request == null) {
+    if (request === null) {
         return false;
     }
     if (request.requestType === "wait") {
@@ -52,6 +53,7 @@ export class Player {
     debug: boolean;
     room: Battle;
     gens: Generations;
+    prevRequest: AnyObject;
     constructor(
         playerStream: ObjectReadWriteStream<string>,
         playerIndex: number,
@@ -66,6 +68,7 @@ export class Player {
         this.log = [];
         this.debug = debug;
         this.room = new Battle(gens);
+        this.prevRequest = null;
     }
     getStream() {
         return this.game?.stream;
@@ -133,11 +136,10 @@ export class Player {
         let value: string | string[], done: any, act: boolean, state: Buffer;
 
         const debugLog = [];
+        const id = v4();
 
         while ((({ value, done } = await this.stream.next()), !done)) {
-            if (this.debug) {
-                debugLog.push(value);
-            }
+            debugLog.push(value);
             try {
                 act = this.receive(value);
                 if (act) {
@@ -145,19 +147,24 @@ export class Player {
                     if (this.debug) {
                         await outStream.write(state);
                         await this.stream.write(
-                            randomAction(
-                                Uint16State.getLegalMask(
-                                    this.room.request,
-                                    this.done
-                                )
-                            )
+                            Math.random() < 0.5
+                                ? getRandomAction(this.room.request)
+                                : "default"
                         );
                     } else {
                         await outStream.write(state);
                     }
+                    this.prevRequest = this.room.request;
+                    this.room.request = null;
                 }
             } catch (err) {
-                fs.writeFileSync(`debug/${v4()}.log`, debugLog.join("\n"));
+                fs.writeFileSync(
+                    `debug/logs/${id}-${this.game.gameIndex}-${this.playerIndex}.json`,
+                    JSON.stringify({
+                        log: debugLog,
+                        inputLog: this.game.stream.battle.inputLog,
+                    })
+                );
             }
         }
         state = this.getState();

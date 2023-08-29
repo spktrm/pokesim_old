@@ -31,17 +31,21 @@ class ResBlock(nn.Module):
     def __init__(self, size: int) -> None:
         super().__init__()
 
-        self.lin1 = _layer_init(nn.Linear(size, size))
-        self.lin2 = _layer_init(nn.Linear(size, size))
+        self.net = nn.Sequential(
+            nn.LeakyReLU(),
+            _layer_init(nn.Linear(size, size)),
+            nn.LayerNorm(size),
+            nn.LeakyReLU(),
+            _layer_init(nn.Linear(size, size)),
+            nn.LayerNorm(size),
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.lin1(F.relu(x))
-        out = self.lin1(F.relu(x))
-        return out + x
+        return self.net(x) + x
 
 
 class Model(nn.Module):
-    def __init__(self, size: int = 256):
+    def __init__(self, size: int = 64):
         super().__init__()
         self.embedding = EntityEmbedding()
         self.move_embeddings = _layer_init(
@@ -59,12 +63,14 @@ class Model(nn.Module):
 
         self.ee1 = nn.Sequential(
             _layer_init(nn.Linear(888, size, bias=False)),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             _layer_init(nn.Linear(size, size, bias=False)),
+            nn.LayerNorm(size),
         )
         self.ee2 = nn.Sequential(
-            nn.ReLU(),
+            nn.LeakyReLU(),
             _layer_init(nn.Linear(3 * size, size, bias=False)),
+            nn.LayerNorm(size),
         )
 
         self.context_embedding = _layer_init(
@@ -78,22 +84,26 @@ class Model(nn.Module):
             nn.ReLU(),
             nn.Conv1d(_NUM_HISTORY, 32, 3, 2, bias=False),
             nn.MaxPool1d(2),
-            nn.ReLU(),
+            nn.LeakyReLU(),
             nn.Conv1d(32, 64, 3, 2, bias=False),
             nn.MaxPool1d(2),
         )
         self.torso3 = nn.Sequential(
-            nn.ReLU(),
-            _layer_init(nn.Linear(960, size)),
+            nn.LeakyReLU(),
+            _layer_init(nn.Linear((size - 16) * 4, size)),
+            nn.LayerNorm(size),
         )
         self.queries = nn.Sequential(
-            nn.ReLU(),
+            nn.LeakyReLU(),
             _layer_init(nn.Linear(size, size)),
-            nn.ReLU(),
+            nn.LayerNorm(size),
+            nn.LeakyReLU(),
             _layer_init(nn.Linear(size, size)),
+            nn.LayerNorm(size),
         )
         self.value = nn.Sequential(
-            nn.ReLU(),
+            ResBlock(size),
+            ResBlock(size),
             _layer_init(nn.Linear(size, 1)),
         )
 

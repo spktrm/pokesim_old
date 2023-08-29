@@ -295,9 +295,6 @@ class Learner:
 
         loss_val = self.loss(batch, alpha)
 
-        if loss_val > 5:
-            batch.save(f"debug/{self.learner_steps}-batch.bt")
-
         nn.utils.clip_grad.clip_grad_value_(
             self.params.parameters(), self.config.clip_gradient
         )

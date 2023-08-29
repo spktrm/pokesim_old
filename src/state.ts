@@ -53,7 +53,9 @@ function getPublicPokemon(pokemon: AnyObject, active: boolean) {
         getMappingValue(pokemon, pokemonMapping, formatKey(pokemon.name)),
         getMappingValue(pokemon, itemMapping, pokemon.item),
         getMappingValue(pokemon, abilityMapping, pokemon.ability),
-        Math.floor(1000 * (pokemon.hp / pokemon.maxhp)),
+        pokemon.maxhp !== undefined
+            ? Math.floor(1000 * (pokemon.hp / pokemon.maxhp))
+            : 1000,
         active ? 1 : 0,
         pokemon.fainted ? 1 : 0,
         statusMapping[pokemon.status] ?? -1,
@@ -98,6 +100,12 @@ const boostsEntries = Object.entries(boostsMapping);
 
 export class Uint16State {
     static getRequest(request: Request): number[] {
+        if (request === null) {
+            const out = Array(6 * fillPokemon.length);
+            out.fill(0);
+            return out;
+        }
+
         let pokemon = [];
         let arr: number[];
         for (const pokemonObj of request.side.pokemon) {

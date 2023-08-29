@@ -169,3 +169,5 @@ coverage
 *.pt
 
 wandb/
+
+debug/logs
