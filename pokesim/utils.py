@@ -14,6 +14,7 @@ from pokesim.constants import (
     _SIDE_CON_OFFSET,
     _FIELD_OFFSET,
     _BOOSTS_OFFSET,
+    _ACTION_HIST_OFFSET,
     _POKEMON_SIZE,
 )
 
@@ -41,7 +42,8 @@ def preprocess(obs: torch.Tensor) -> TensorDict:
     teams = obs[..., :_SIDE_CON_OFFSET]
     side_conditions = obs[..., _SIDE_CON_OFFSET:_VOLAILTE_OFFSET]
     boosts = obs[..., _BOOSTS_OFFSET:_FIELD_OFFSET]
-    field = obs[..., _FIELD_OFFSET:]
+    field = obs[..., _FIELD_OFFSET:_ACTION_HIST_OFFSET]
+    action_hist = obs[..., _ACTION_HIST_OFFSET:]
 
     return {
         "teams": teams.reshape(*leading_dims, 3, -1, _POKEMON_SIZE).astype(np.int64),
@@ -53,6 +55,7 @@ def preprocess(obs: torch.Tensor) -> TensorDict:
         ).astype(np.int64),
         "boosts": boosts.reshape(*reshape_args).astype(np.int64),
         "field": field.reshape(*leading_dims, -1).astype(np.int64),
+        "action_hist": action_hist.reshape(*leading_dims, -1, 2).astype(np.int64),
     }
 
 
@@ -66,7 +69,7 @@ def optimized_forward(
     module: nn.Module,
     inputs: Dict[str, torch.Tensor],
     t_callback: Callable,
-    batch_size: int = 1024,
+    batch_size: int = 256,
 ):
     results = []
 

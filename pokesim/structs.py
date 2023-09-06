@@ -29,7 +29,7 @@ class EnvStep(NamedTuple):
             pad_shape = list(stacked.shape)
             pad_shape[2] = pad_depth - stacked.shape[2]
             stacked = np.concatenate(
-                (np.zeros(shape=pad_shape, dtype=stacked.dtype), stacked), axis=2
+                (stacked, np.zeros(shape=pad_shape, dtype=stacked.dtype)), axis=2
             )
         return cls(
             game_id=latest.game_id,
@@ -117,6 +117,9 @@ class Trajectory(NamedTuple):
     policy: TensorType
     action: TensorType
 
+    def __len__(self):
+        return self.valid.sum()
+
     def save(self, fpath: str):
         print(f"Saving `{fpath}`")
         with open(fpath, "wb") as f:
@@ -159,7 +162,7 @@ class Trajectory(NamedTuple):
 
 class Batch(Trajectory):
     @classmethod
-    def from_trajectories(cls, batch: List[Trajectory]) -> "Batch":
+    def from_trajectories(cls, batch: List[Trajectory], sort: bool = True) -> "Batch":
         store = {k: [] for k in Trajectory._fields}
         for trajectory in batch:
             for key, values in trajectory._asdict().items():
@@ -175,8 +178,17 @@ class Batch(Trajectory):
         }
         arange = np.arange(data["valid"].shape[0])[:, None]
         amax = np.argmax(data["valid"] == False, 0)
-        data["valid"] = arange < amax
+        valid = arange < amax
+        data["valid"] = valid
         data["rewards"][:-1] = data["rewards"][1:]
         _rewards_prev = data["rewards"]
         data["rewards"] = _rewards_prev * (arange == (amax - 1))[..., None]
+
+        if sort:
+            order = np.argsort(valid.sum(0))
+            data = {
+                key: np.ascontiguousarray(value[:, order])
+                for key, value in data.items()
+            }
+
         return cls(**data)

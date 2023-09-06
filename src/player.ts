@@ -44,12 +44,26 @@ function randomAction(arr: Array<number>) {
     }
 }
 
+function isAction(line: string): boolean {
+    const splitString = line.split("|");
+    const actionType = splitString[1];
+    switch (actionType) {
+        case "move":
+            return true;
+        case "switch":
+            return true;
+        default:
+            return false;
+    }
+}
+
 export class Player {
     game: Game;
     playerIndex: number;
     done: boolean;
     stream: ObjectReadWriteStream<string>;
     log: any[];
+    turns: Object;
     debug: boolean;
     room: Battle;
     gens: Generations;
@@ -66,12 +80,14 @@ export class Player {
         this.done = false;
         this.stream = playerStream;
         this.log = [];
+        this.turns = { 0: [] };
         this.debug = debug;
         this.room = new Battle(gens);
         this.prevRequest = null;
     }
+
     getStream() {
-        return this.game?.stream;
+        return (this.game ?? {})?.stream;
     }
     getWinner() {
         let winner: number;
@@ -93,33 +109,40 @@ export class Player {
         return winner;
     }
     getState(): Buffer {
+        const turn = Math.max(0, this.room.turn - 1);
         const baseInfo: number[] = [
             workerIndex,
-            this.game.gameIndex,
+            (this.game ?? {})?.gameIndex ?? 0,
             this.playerIndex,
             this.done ? 1 : 0,
             this.getWinner(),
-            this.room.turn,
+            turn,
         ];
-        const legalMask = Uint16State.getLegalMask(
-            this.room.request,
-            this.done
-        );
-        const arr = new Int16Array([
+        const actionLines = this.turns[turn] ?? [];
+        const state = new Uint16State(this.playerIndex, this.room);
+        const legalMask = state.getLegalMask(this.done);
+
+        let data: any;
+        data = [
             ...baseInfo,
-            ...Uint16State.getRequest(this.room.request),
-            ...Uint16State.getTeam(this.room.p1.team, this.room.p1.active),
-            ...Uint16State.getTeam(this.room.p2.team, this.room.p2.active),
-            ...Uint16State.getSideConditions(this.room.p1.sideConditions),
-            ...Uint16State.getSideConditions(this.room.p2.sideConditions),
-            ...Uint16State.getVolatileStatus(this.room.p1.active),
-            ...Uint16State.getVolatileStatus(this.room.p2.active),
-            ...Uint16State.getBoosts(this.room.p1.active),
-            ...Uint16State.getBoosts(this.room.p2.active),
-            ...Uint16State.getField(this.room.field),
+            ...state.getRequest(),
+            ...state.getMyTeam(),
+            ...state.getOppTeam(),
+            ...state.getMySideConditions(),
+            ...state.getOppSideConditions(),
+            ...state.getMyVolatileStatus(),
+            ...state.getOppVolatileStatus(),
+            ...state.getMyBoosts(),
+            ...state.getOppBoosts(),
+            ...state.getField(),
+            ...state.actionToVector(actionLines[0]),
+            ...state.actionToVector(actionLines[1]),
+            ...state.actionToVector(actionLines[2]),
+            ...state.actionToVector(actionLines[3]),
             ...legalMask,
             2570, // \n\n in ascii hex
-        ]);
+        ];
+        const arr = new Int16Array(data);
         const buf = Buffer.from(arr.buffer);
         return buf;
     }
@@ -127,41 +150,57 @@ export class Player {
         if (chunk.startsWith("|error")) {
             throw Error(chunk);
         }
+        const turn = Math.max(0, this.room.turn - 1);
         for (const line of chunk.split("\n")) {
             this.room.add(line);
+            this.log.push(line);
+            if (isAction(line)) {
+                if (this.turns[turn] === undefined) {
+                    this.turns[turn] = [];
+                }
+                this.turns[turn].push(line);
+            }
         }
-        return isActionRequired(chunk, this.room.request);
+        return isActionRequired(chunk, this.room?.request ?? {});
+    }
+    async writeState(outStream: WriteStream, state: Buffer) {
+        console.log(state);
+        // if (this.debug) {
+        //     await outStream.write(state);
+        //     await this.stream.write(
+        //         Math.random() < 0.5
+        //             ? getRandomAction(this.room.request)
+        //             : "default"
+        //     );
+        // } else {
+        //     await outStream.write(state);
+        // }
+    }
+    async receiveChunk(outStream: WriteStream, value: string) {
+        let act: boolean, state: Buffer;
+
+        act = this.receive(value);
+        if (act) {
+            state = this.getState();
+            await this.writeState(outStream, state);
+            this.prevRequest = this.room.request;
+            this.room.request = null;
+        }
     }
     async pipeTo(outStream: WriteStream) {
-        let value: string | string[], done: any, act: boolean, state: Buffer;
+        let value: string | string[], done: any, state: Buffer;
 
-        const debugLog = [];
         const id = v4();
 
         while ((({ value, done } = await this.stream.next()), !done)) {
-            debugLog.push(value);
             try {
-                act = this.receive(value);
-                if (act) {
-                    state = this.getState();
-                    if (this.debug) {
-                        await outStream.write(state);
-                        await this.stream.write(
-                            Math.random() < 0.5
-                                ? getRandomAction(this.room.request)
-                                : "default"
-                        );
-                    } else {
-                        await outStream.write(state);
-                    }
-                    this.prevRequest = this.room.request;
-                    this.room.request = null;
-                }
+                this.receiveChunk(outStream, value);
             } catch (err) {
+                console.error(err + "\n\n");
                 fs.writeFileSync(
                     `debug/logs/${id}-${this.game.gameIndex}-${this.playerIndex}.json`,
                     JSON.stringify({
-                        log: debugLog,
+                        log: this.log,
                         inputLog: this.game.stream.battle.inputLog,
                     })
                 );

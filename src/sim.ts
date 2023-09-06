@@ -34,14 +34,14 @@ function chooseTeamPreview(team: AnyObject[]): string {
 
 function chooseMove(
     active: AnyObject,
-    moves: { choice: string; move: AnyObject }[]
+    moves: { choice: string; move: AnyObject }[],
 ): string {
     return _PRNG.sample(moves).choice;
 }
 
 function chooseSwitch(
     active: AnyObject | undefined,
-    switches: { slot: number; pokemon: AnyObject }[]
+    switches: { slot: number; pokemon: AnyObject }[],
 ): number {
     return _PRNG.sample(switches).slot;
 }
@@ -81,7 +81,7 @@ function forceSwitchRandomAction(request: AnyObject): string {
                     !!(
                         +!!pokemon[i].reviving ^
                         +!pokemon[j - 1].condition.endsWith(` fnt`)
-                    )
+                    ),
             );
 
             if (!canSwitch.length) return `pass`;
@@ -90,11 +90,11 @@ function forceSwitchRandomAction(request: AnyObject): string {
                 canSwitch.map((slot) => ({
                     slot,
                     pokemon: pokemon[slot - 1],
-                }))
+                })),
             );
             chosen.push(target);
             return `switch ${target}`;
-        }
+        },
     );
     return choices.join(`, `);
 }
@@ -134,7 +134,7 @@ function activeRandomAction(request: AnyObject): string {
             .filter(
                 (j) =>
                     // not disabled
-                    !possibleMoves[j - 1].disabled
+                    !possibleMoves[j - 1].disabled,
                 // NOTE: we don't actually check for whether we have PP or not because the
                 // simulator will mark the move as disabled if there is zero PP and there are
                 // situations where we actually need to use a move with 0 PP (Gen 1 Wrap).
@@ -154,7 +154,7 @@ function activeRandomAction(request: AnyObject): string {
                         move: active.canZMove[j - 1].move,
                         target: active.canZMove[j - 1].target,
                         zMove: true,
-                    }))
+                    })),
             );
         }
 
@@ -163,7 +163,7 @@ function activeRandomAction(request: AnyObject): string {
         const hasAlly =
             pokemon.length > 1 && !pokemon[i ^ 1].condition.endsWith(` fnt`);
         const filtered = canMove.filter(
-            (m) => m.target !== `adjacentAlly` || hasAlly
+            (m) => m.target !== `adjacentAlly` || hasAlly,
         );
         canMove = filtered.length ? filtered : canMove;
 
@@ -197,14 +197,14 @@ function activeRandomAction(request: AnyObject): string {
                 // not chosen for a simultaneous switch
                 !chosen.includes(j) &&
                 // not fainted
-                !pokemon[j - 1].condition.endsWith(` fnt`)
+                !pokemon[j - 1].condition.endsWith(` fnt`),
         );
         const switches = active.trapped ? [] : canSwitch;
 
         if (switches.length && (!moves.length || _PRNG.next() > 1)) {
             const target = chooseSwitch(
                 active,
-                canSwitch.map((slot) => ({ slot, pokemon: pokemon[slot - 1] }))
+                canSwitch.map((slot) => ({ slot, pokemon: pokemon[slot - 1] })),
             );
             chosen.push(target);
             return `switch ${target}`;
@@ -214,10 +214,7 @@ function activeRandomAction(request: AnyObject): string {
                 canZMove = false;
                 return move;
             } else if (change) {
-                if (canTerastallize) {
-                    canTerastallize = false;
-                    return `${move} terastallize`;
-                } else if (canDynamax) {
+                if (canDynamax) {
                     canDynamax = false;
                     return `${move} dynamax`;
                 } else if (canMegaEvo) {
@@ -234,7 +231,7 @@ function activeRandomAction(request: AnyObject): string {
             throw new Error(
                 `unable to make choice ${i}. request='${request}',` +
                     ` chosen='${chosen}', (mega=${canMegaEvo}, ultra=${canUltraBurst}, zmove=${canZMove},` +
-                    ` dynamax='${canDynamax}', terastallize=${canTerastallize})`
+                    ` dynamax='${canDynamax}', terastallize=${canTerastallize})`,
             );
         }
     });

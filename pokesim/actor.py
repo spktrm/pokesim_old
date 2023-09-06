@@ -106,7 +106,14 @@ class DefaultEvalActor(EvalActor):
 
 class RandomEvalActor(EvalActor):
     async def choose_action(self, env_step: EnvStep) -> Tuple[Action, ActorStep]:
-        return (Action.from_env_step(env_step).random(), None)
+        batch = preprocess(env_step.raw_obs)
+        batch = {k: torch.from_numpy(v) for k, v in batch.items()}
+        mask = torch.from_numpy(env_step.legal.astype(np.bool_))
+        policy = (
+            torch.masked_fill(torch.ones(10), ~mask, float("-inf")).softmax(-1).numpy()
+        )
+        action = _get_action(policy)
+        return (Action.from_env_step(env_step).select_action(action), None)
 
 
 class MaxdmgEvalActor(EvalActor):

@@ -15,8 +15,8 @@ const gens = new Generations(new ModdedDex(modid as ID));
 describe("test-sim", () => {
     test("test-run", async () => {
         const game = new Game(0, formatid, gens, true);
-        for (let i = 0; i <= 1; i++) {
+        for (let i = 0; i <= 100; i++) {
             await game.play();
         }
-    }, 10000);
+    }, 100000);
 });

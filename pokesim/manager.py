@@ -33,7 +33,12 @@ class Manager:
 
             player_id = env_step.player_id.item()
 
-            actor = getattr(self, f"actor{player_id + 1}")
+            try:
+                actor = getattr(self, f"actor{player_id + 1}")
+            except Exception as e:
+                print(e)
+                continue
+
             hist[player_id].append(env_step)
             env_step = EnvStep.from_stack(hist[player_id][-_NUM_HISTORY:])
 
@@ -64,9 +69,6 @@ class Manager:
 
                 self.process.stdin.write(action)
                 await self.process.stdin.drain()
-            else:
-                reward = env_step.rewards[..., env_step.player_id.item()]
-                actor._done_callback(reward.item())
 
             if dones[game_id] >= 2:
                 if learn_queue is not None:
@@ -78,8 +80,13 @@ class Manager:
                     traj[game_id].append(time_step)
                     trajectory = Trajectory.from_env_steps(traj[game_id])
                     learn_queue.put(trajectory.serialize())
+                    progress_queue.put(len(traj[game_id]))
 
-                progress_queue.put(len(traj[game_id]))
+                assert abs(env_step.rewards).sum() > 0
+                for player_id, actor in enumerate([self.actor1, self.actor2]):
+                    reward = env_step.rewards[..., player_id]
+                    actor._done_callback(reward.item())
+
                 dones[game_id] = 0
                 traj[game_id] = []
                 hist = {0: [], 1: []}

@@ -93,39 +93,34 @@ function getLegalMask(request: AnyObject, done: boolean) {
     return mask;
 }
 
-function numberTo16BitArray(number: number): Array<number> {
-    const binaryString = number.toString(2).padStart(16, "0");
-    return binaryString.split("").map((bit) => parseInt(bit, 10));
-}
-
 async function AssertMask(
+    playerIndex: number,
     stream: ObjectReadWriteStream<string>,
     room: Battle,
 ): Promise<void> {
-    let testMask: number[], corrMask: number[], testP1Side: number[];
+    let testMask: number[],
+        corrMask: number[],
+        testP1Side: number[],
+        state: Uint16State;
     for await (const chunk of stream) {
         for (const line of chunk.split("\n")) {
             room.add(line);
         }
         room.update();
         if (isActionRequired(chunk, room.request)) {
-            testMask = Uint16State.getLegalMask(room.request, false);
+            state = new Uint16State(playerIndex, room);
+            testMask = state.getLegalMask(false);
             corrMask = getLegalMask(room.request, false);
 
-            expect(
-                testMask,
-                // numberTo16BitArray(testMask).slice(-corrMask.length)
-            ).toEqual(corrMask);
+            expect(testMask).toEqual(corrMask);
 
             stream.write("default");
         }
     }
-    testMask = Uint16State.getLegalMask(room.request, true);
+    state = new Uint16State(playerIndex, room);
+    testMask = state.getLegalMask(true);
     corrMask = getLegalMask(room.request, true);
-    expect(
-        testMask,
-        // numberTo16BitArray(testMask).slice(-corrMask.length)
-    ).toEqual(corrMask);
+    expect(testMask).toEqual(corrMask);
 }
 
 describe("test-state", () => {
@@ -152,8 +147,8 @@ describe("test-state", () => {
         const p1room = new Battle(gens);
         const p2room = new Battle(gens);
 
-        AssertMask(streams.p1, p1room);
-        AssertMask(streams.p2, p2room);
+        AssertMask(0, streams.p1, p1room);
+        AssertMask(1, streams.p2, p2room);
 
         void streams.omniscient.write(`>start ${JSON.stringify(spec)}
 >player p1 ${JSON.stringify(p1spec)}
@@ -180,8 +175,8 @@ describe("test-state", () => {
         const p1room = new Battle(gens);
         const p2room = new Battle(gens);
 
-        AssertMask(streams.p1, p1room);
-        AssertMask(streams.p2, p2room);
+        AssertMask(0, streams.p1, p1room);
+        AssertMask(1, streams.p2, p2room);
 
         void streams.omniscient.write(`>start ${JSON.stringify(spec)}
 >player p1 ${JSON.stringify(p1spec)}

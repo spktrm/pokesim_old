@@ -1,4 +1,4 @@
-import { Field, Pokemon, Side } from "@pkmn/client";
+import { Battle, Pokemon } from "@pkmn/client";
 import { AnyObject } from "@pkmn/sim";
 import {
     abilityMapping,
@@ -14,7 +14,6 @@ import {
     weatherMapping,
 } from "./data";
 import { SideConditions } from "./types";
-import { Request } from "@pkmn/protocol";
 
 function formatKey(key: string): string {
     // Convert to lowercase and remove spaces and non-alphanumeric characters
@@ -24,7 +23,7 @@ function formatKey(key: string): string {
 function getMappingValue(
     pokemon: AnyObject,
     mapping: Object,
-    key: string,
+    key: string
 ): number {
     let suffix: string;
     if (key === "asone") {
@@ -46,7 +45,7 @@ function getPublicPokemon(pokemon: AnyObject, active: boolean) {
     let moveTokens = [];
     for (let i = 0; i < 4; i++) {
         moveTokens.push(
-            getMappingValue(pokemon, moveMapping, pokemon.moves[i]),
+            getMappingValue(pokemon, moveMapping, pokemon.moves[i])
         );
     }
     const out = [
@@ -68,7 +67,7 @@ function getPrivatePokemon(pokemon: AnyObject) {
     let moveTokens = [];
     for (let i = 0; i < 4; i++) {
         moveTokens.push(
-            getMappingValue(pokemon, moveMapping, pokemon.moves[i]),
+            getMappingValue(pokemon, moveMapping, pokemon.moves[i])
         );
     }
     const out = [
@@ -99,7 +98,14 @@ const fillPokemon = getPublicPokemon({ name: "", moves: [] }, false);
 const boostsEntries = Object.entries(boostsMapping);
 
 export class Uint16State {
-    static getRequest(request: Request): number[] {
+    playerIndex: number;
+    room: Battle;
+    constructor(playerIndex: number, room: Battle) {
+        this.room = room;
+        this.playerIndex = playerIndex;
+    }
+    getRequest(): number[] {
+        const request = this.room.request;
         if (request === null) {
             const out = Array(6 * fillPokemon.length);
             out.fill(0);
@@ -115,13 +121,44 @@ export class Uint16State {
         return [].concat(...pokemon);
     }
 
-    static getBoosts(actives: Pokemon[]): number[] {
+    actionToVector(actionLine: string): number[] {
+        const room = this.room;
+        if (actionLine === undefined) {
+            return [-1, -1];
+        }
+        const splitString = actionLine.split("|");
+        const actionType = splitString[1];
+        const user = splitString[2];
+        const action =
+            actionType === "move" ? formatKey(splitString[3]) : actionType;
+        const p1keys = room.p1.team.map((x) => x.ident.toString()).slice(0, 6);
+        const p2keys = room.p2.team.map((x) => x.ident.toString()).slice(0, 6);
+        const keys = [...p1keys, ...Array(6 - p1keys.length)].concat([
+            ...p2keys,
+            ,
+            ...Array(6 - p1keys.length),
+        ]);
+        const userIndex = keys.indexOf(user);
+        const actionIndex = moveMapping[action] ?? -1;
+        return [userIndex >= 6 ? userIndex + 6 : userIndex, actionIndex];
+    }
+
+    getMyBoosts() {
+        const side = this.getMySide();
+        return this.getBoosts(side.active);
+    }
+    getOppBoosts() {
+        const side = this.getOppSide();
+        return this.getBoosts(side.active);
+    }
+
+    getBoosts(actives: Pokemon[]): number[] {
         const boostsVector = Array(actives.length * boostsEntries.length);
         boostsVector.fill(0);
         for (const [activeIndex, activePokemon] of actives.entries()) {
             if (activePokemon !== null) {
                 for (const [boost, value] of Object.entries(
-                    activePokemon.boosts,
+                    activePokemon.boosts
                 )) {
                     boostsVector[activeIndex + boostsMapping[boost]] = value;
                 }
@@ -130,11 +167,12 @@ export class Uint16State {
         return boostsVector;
     }
 
-    static getField(field: Field): number[] {
+    getField(): number[] {
+        const field = this.room.field;
         const pseudoWeatherVector = Array(9);
         pseudoWeatherVector.fill(0);
         for (const [index, [name, pseudoWeather]] of Object.entries(
-            field.pseudoWeather,
+            field.pseudoWeather
         ).entries()) {
             pseudoWeatherVector[index] = pseudoWeatherMapping[name];
             pseudoWeatherVector[index + 1] = pseudoWeather.minDuration;
@@ -151,13 +189,22 @@ export class Uint16State {
         return [...pseudoWeatherVector, ...weatherAndTerrainVector];
     }
 
-    static getVolatileStatus(actives: Pokemon[]): number[] {
+    getMyVolatileStatus() {
+        const side = this.getMySide();
+        return this.getVolatileStatus(side.active);
+    }
+    getOppVolatileStatus() {
+        const side = this.getOppSide();
+        return this.getVolatileStatus(side.active);
+    }
+
+    getVolatileStatus(actives: Pokemon[]): number[] {
         const volatileStatusVector = Array(actives.length * 10);
         volatileStatusVector.fill(0);
         for (const [activeIndex, activePokemon] of actives.entries()) {
             if (activePokemon !== null) {
                 for (const [volatileIndex, volatileStatus] of Object.values(
-                    activePokemon.volatiles,
+                    activePokemon.volatiles
                 ).entries()) {
                     volatileStatusVector[activeIndex + volatileIndex] =
                         (volatileStatusMapping[volatileStatus.id] << 8) |
@@ -168,9 +215,18 @@ export class Uint16State {
         return volatileStatusVector;
     }
 
-    static getSideConditions(sideConditions: SideConditions): number[] {
+    getMySideConditions() {
+        const side = this.getMySide();
+        return this.getSideConditions(side.sideConditions);
+    }
+    getOppSideConditions() {
+        const side = this.getOppSide();
+        return this.getSideConditions(side.sideConditions);
+    }
+
+    getSideConditions(sideConditions: SideConditions): number[] {
         const sideConditionVector = Array(
-            Object.keys(sideConditionsMapping).length,
+            Object.keys(sideConditionsMapping).length
         );
         sideConditionVector.fill(0);
         for (const [name, sideCondition] of Object.entries(sideConditions)) {
@@ -180,7 +236,24 @@ export class Uint16State {
         return sideConditionVector;
     }
 
-    static getTeam(team: Pokemon[], actives: Pokemon[]): number[] {
+    getMySide() {
+        return this.room.sides[this.playerIndex];
+    }
+
+    getOppSide() {
+        return this.room.sides[1 - this.playerIndex];
+    }
+
+    getMyTeam() {
+        const side = this.getMySide();
+        return this.getTeam(side.team, side.active);
+    }
+    getOppTeam() {
+        const side = this.getOppSide();
+        return this.getTeam(side.team, side.active);
+    }
+
+    getTeam(team: Pokemon[], actives: Pokemon[]): number[] {
         let pokemon = [];
         let arr: number[];
         let ident: string;
@@ -197,7 +270,7 @@ export class Uint16State {
             } else {
                 arr = this.getPokemon(
                     team[i],
-                    activeIdents.includes(team[i].ident),
+                    activeIdents.includes(team[i].ident)
                 );
             }
             pokemon.push(arr);
@@ -205,11 +278,12 @@ export class Uint16State {
         return [].concat(...pokemon);
     }
 
-    static getPokemon(pokemon: Pokemon, active: boolean): number[] {
+    getPokemon(pokemon: Pokemon, active: boolean): number[] {
         return getPublicPokemon(pokemon, active);
     }
 
-    static getLegalMask(request: AnyObject, done: boolean): number[] {
+    getLegalMask(done: boolean): number[] {
+        const request = this.room.request as AnyObject;
         const mask = Array(10);
         if (request === undefined || done) {
             mask.fill(1);

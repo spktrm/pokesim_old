@@ -1,5 +1,5 @@
 import math
-
+import inspect
 import numpy as np
 
 import torch
@@ -13,7 +13,13 @@ from pokesim.constants import _NUM_PLAYERS
 from pokesim.model.main import Model
 from pokesim.structs import Batch
 from pokesim.utils import preprocess, optimized_forward
-from pokesim.rl_utils import EntropySchedule, SGDTowardsModel, v_trace, _player_others
+from pokesim.rl_utils import (
+    EntropySchedule,
+    SGDTowardsModel,
+    v_trace,
+    _player_others,
+    _policy_ratio,
+)
 from pokesim.config import RNaDConfig
 
 
@@ -126,8 +132,13 @@ def get_loss_nerd(
 
 
 def _print_params(model: nn.Module):
-    params_count = sum(x.numel() for x in model.parameters() if x.requires_grad)
+    trainable_params_count = sum(
+        x.numel() for x in model.parameters() if x.requires_grad
+    )
+    params_count = sum(x.numel() for x in model.parameters())
+    print(f"""Total Trainable Params: {trainable_params_count:,}""")
     print(f"""Total Params: {params_count:,}""")
+    return trainable_params_count, params_count
 
 
 class Learner:
@@ -165,7 +176,27 @@ class Learner:
             self.params_target, self.params, self.config.target_network_avg
         )
         self.learner_steps = 0
-        _print_params(self.params)
+
+        _, params = _print_params(self.params)
+        B_32 = 32
+        TMEM = (12 * 10**9 * 8 - 4 * params * B_32) * 1 / 3
+
+        bs = (TMEM // B_32) // params
+        bs_sqrt = int(bs**0.5) + 1
+
+        # self.Bbs = min(2 * bs_sqrt, config.batch_size)
+        # self.Tbs = int(bs // self.Bbs) + 1
+        self.Bbs = 32
+        self.Tbs = 32
+        print(f"({self.Tbs}, {self.Bbs}) => {self.Bbs * self.Tbs}")
+
+    def get_config(self):
+        return {
+            **{
+                k: v.__dict__ if inspect.isclass(v) else v
+                for k, v in self.config.__dict__.items()
+            }
+        }
 
     def _to_torch(self, arr: np.ndarray, device: str = None):
         if device is None:
@@ -237,13 +268,16 @@ class Learner:
             has_played_list.append(has_played)
             v_trace_policy_target_list.append(policy_target_)
 
-        T, B = batch.valid.shape
-        size = T * B
-        num = math.ceil(size / 1024)
-        bs = T // num
+        T, B, *_ = batch.valid.shape
 
-        is_vector = torch.unsqueeze(valid, axis=-1)
-        importance_sampling_correction = [is_vector] * _NUM_PLAYERS
+        Tnum = math.ceil(T / self.Tbs)
+        Bnum = math.ceil(B / self.Bbs)
+
+        policy_ratio = np.array(
+            _policy_ratio(_pi, batch.policy, action_oh, batch.valid)
+        )
+        is_vector = torch.unsqueeze(self._to_torch(policy_ratio), axis=-1)
+        importance_sampling_correction = [torch.clamp(is_vector, max=1)] * _NUM_PLAYERS
 
         has_played_p1 = has_played_list[0].sum()
         has_played_p2 = has_played_list[1].sum()
@@ -253,45 +287,54 @@ class Learner:
 
         t_loss = 0
 
-        for i in range(num):
-            s, f = bs * i, bs * (i + 1)
-            pi, v, _, logit = self.params(
-                **{k: t_callback(v[s:f]) for k, v in forward_batch.items()}
-            )
+        for ti in range(Tnum):
+            for bi in range(Bnum):
+                ts, tf = self.Tbs * ti, self.Tbs * (ti + 1)
+                bs, bf = self.Bbs * bi, self.Bbs * (bi + 1)
 
-            loss = 0
+                if not batch.valid[ts:tf, bs:bf].sum().item():
+                    continue
 
-            loss_v = get_loss_v(
-                [v] * _NUM_PLAYERS,
-                [v_target[s:f] for v_target in v_target_list],
-                [has_played[s:f] for has_played in has_played_list],
-            )
-            loss += loss_v[0] / has_played_p1
-            loss += loss_v[1] / has_played_p2
+                minibatch = {
+                    k: t_callback(v[ts:tf, bs:bf]) for k, v in forward_batch.items()
+                }
+                pi, v, _, logit = self.params(**minibatch)
 
-            # Uses v-trace to define q-values for Nerd
-            loss_nerd = get_loss_nerd(
-                [logit] * _NUM_PLAYERS,
-                [pi] * _NUM_PLAYERS,
-                [vtpt[s:f] for vtpt in v_trace_policy_target_list],
-                valid[s:f],
-                player_id[s:f],
-                legal[s:f],
-                [isc[s:f] for isc in importance_sampling_correction],
-                clip=self.config.nerd.clip,
-                threshold=self.config.nerd.beta,
-            )
-            loss += loss_nerd[0] / policy_target_norm_p1
-            loss += loss_nerd[1] / policy_target_norm_p2
+                loss = 0
 
-            loss.backward()
+                loss_v = get_loss_v(
+                    [v] * _NUM_PLAYERS,
+                    [v_target[ts:tf, bs:bf] for v_target in v_target_list],
+                    [has_played[ts:tf, bs:bf] for has_played in has_played_list],
+                )
+                loss += loss_v[0] / has_played_p1
+                loss += loss_v[1] / has_played_p2
 
-            t_loss += loss.item()
+                # Uses v-trace to define q-values for Nerd
+                loss_nerd = get_loss_nerd(
+                    [logit] * _NUM_PLAYERS,
+                    [pi] * _NUM_PLAYERS,
+                    [vtpt[ts:tf, bs:bf] for vtpt in v_trace_policy_target_list],
+                    valid[ts:tf, bs:bf],
+                    player_id[ts:tf, bs:bf],
+                    legal[ts:tf, bs:bf],
+                    [is_c[ts:tf, bs:bf] for is_c in importance_sampling_correction],
+                    clip=self.config.nerd.clip,
+                    threshold=self.config.nerd.beta,
+                )
+                loss += loss_nerd[0] / policy_target_norm_p1
+                loss += loss_nerd[1] / policy_target_norm_p2
+
+                loss.backward()
+
+                t_loss += loss.item()
 
         return t_loss
 
     def update_parameters(self, batch: Batch, alpha: float, update_target_net: bool):
         """A jitted pure-functional part of the `step`."""
+
+        self.optimizer.zero_grad()
 
         loss_val = self.loss(batch, alpha)
 
