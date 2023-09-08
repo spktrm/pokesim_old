@@ -29,15 +29,6 @@ def _layer_init(
     return layer
 
 
-class Swish(nn.Module):
-    def __init__(self, size: int, affine: bool = True) -> None:
-        super().__init__()
-        self.beta = nn.Parameter(torch.ones(size), requires_grad=affine)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x * torch.sigmoid(x * self.beta)
-
-
 def ghostmax(x, dim=None):
     # subtract the max for stability
     x = x - x.max(dim=dim, keepdim=True).values
@@ -73,7 +64,7 @@ class ResBlock(nn.Module):
                 _layer_init(nn.Linear(size1, size2, bias=bias)),
             ]
             if use_layer_norm:
-                layer.insert(0, nn.LayerNorm(size1))
+                layer.insert(0, RMSNorm(size1))
             layers += layer
         self.net = nn.Sequential(*layers)
 
@@ -125,12 +116,48 @@ class MLP(nn.Module):
                 _layer_init(nn.Linear(size1, size2, bias=bias)),
             ]
             if use_layer_norm:
-                layer.insert(0, nn.LayerNorm(size1))
+                layer.insert(0, RMSNorm(size1))
             layers += layer
         self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x)
+
+
+class RMSNorm(nn.Module):
+    def __init__(self, d: int, p: float = -1.0, eps: float = 1e-8, bias: bool = False):
+        super().__init__()
+
+        self.eps = eps
+        self.d = d
+        self.p = p
+        self.bias = bias
+
+        self.scale = nn.Parameter(torch.ones(d))
+        self.register_parameter("scale", self.scale)
+
+        if self.bias:
+            self.offset = nn.Parameter(torch.zeros(d))
+            self.register_parameter("offset", self.offset)
+
+    def forward(self, x: torch.Tensor):
+        if self.p < 0.0 or self.p > 1.0:
+            norm_x = x.norm(2, dim=-1, keepdim=True)
+            d_x = self.d
+        else:
+            partial_size = int(self.d * self.p)
+            partial_x, _ = torch.split(x, [partial_size, self.d - partial_size], dim=-1)
+
+            norm_x = partial_x.norm(2, dim=-1, keepdim=True)
+            d_x = partial_size
+
+        rms_x = norm_x * d_x ** (-1.0 / 2)
+        x_normed = x / (rms_x + self.eps)
+
+        if self.bias:
+            return self.scale * x_normed + self.offset
+
+        return self.scale * x_normed
 
 
 class MultiHeadAttention(nn.Module):
@@ -228,10 +255,7 @@ class Transformer(nn.Module):
         self.use_layer_norm = use_layer_norm
         if use_layer_norm:
             self.ln = nn.ModuleList(
-                [
-                    nn.LayerNorm(transformer_model_size)
-                    for _ in range(transformer_num_layers)
-                ]
+                [RMSNorm(transformer_model_size) for _ in range(transformer_num_layers)]
             )
         self.resnet_before = ResNet(
             input_size=transformer_model_size,
@@ -281,7 +305,7 @@ class ToVector(nn.Module):
             _layer_init(nn.Linear(hidden_sizes[-1], hidden_sizes[-1])),
         ]
         if use_layer_norm:
-            out_layers.insert(0, nn.LayerNorm(hidden_sizes[-1]))
+            out_layers.insert(0, RMSNorm(hidden_sizes[-1]))
         self.out = nn.Sequential(*out_layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -325,7 +349,7 @@ class PointerLogits(nn.Module):
 
 
 class Model(nn.Module):
-    def __init__(self, entity_size: int = 64, vector_size: int = 256):
+    def __init__(self, entity_size: int = 32, vector_size: int = 128):
         super().__init__()
         self.embedding = EntityEmbedding()
 
@@ -338,8 +362,6 @@ class Model(nn.Module):
         self.status_onehot = nn.Embedding.from_pretrained(torch.eye(7))
 
         self.units_lin = _layer_init(nn.Linear(890, entity_size))
-        self.units_priv_mlp = MLP([entity_size, entity_size])
-        self.units_pub_mlp = MLP([entity_size, entity_size])
         self.units_mlp = MLP([2 * entity_size, entity_size])
 
         self.entity_transformer = Transformer(
@@ -389,6 +411,16 @@ class Model(nn.Module):
         )
         self.torso2 = ResNet(vector_size)
 
+        # self.action_transformer = Transformer(
+        #     transformer_num_layers=1,
+        #     transformer_num_heads=2,
+        #     transformer_key_size=entity_size // 2,
+        #     transformer_value_size=entity_size // 2,
+        #     transformer_model_size=entity_size,
+        #     resblocks_num_before=1,
+        #     resblocks_num_after=1,
+        #     resblocks_hidden_size=entity_size // 2,
+        # )
         self.query_resnet = ResNet(vector_size)
         self.keys_mlp = MLP([entity_size, entity_size // 4])
         self.pointer = PointerLogits(
@@ -454,15 +486,15 @@ class Model(nn.Module):
                 (
                     torch.cat(
                         (
-                            self.units_priv_mlp(entity_embeddings[..., 0, :, :]),
-                            self.units_pub_mlp(entity_embeddings[..., 1, :, :]),
+                            entity_embeddings[..., 0, :, :],
+                            entity_embeddings[..., 1, :, :],
                         ),
                         dim=-1,
                     ),
                     torch.cat(
                         (
-                            self.units_priv_mlp(entity_embeddings[..., 2, :, :]),
-                            self.units_pub_mlp(entity_embeddings[..., 2, :, :]),
+                            entity_embeddings[..., 2, :, :],
+                            entity_embeddings[..., 2, :, :],
                         ),
                         dim=-1,
                     ),
@@ -500,7 +532,7 @@ class Model(nn.Module):
         context_embedding = self.context_embedding(context_onehot)
 
         user = action_hist[..., 0].clamp(min=0)
-        user = torch.where(user >= 12, user - 12, user)
+        user = torch.where(user >= 12, user - 6, user)
         move = action_hist[..., 1] + 1
 
         action_move_embeddings = self.move_embeddings(move)
@@ -546,6 +578,10 @@ class Model(nn.Module):
             ),
             dim=-2,
         )
+        # context_actions = self.action_transformer(
+        #     context_actions.flatten(0, 1),
+        #     mask.flatten(0, 1),
+        # ).view(T, B, 10, -1)
 
         query = self.query_resnet(state_embedding).unsqueeze(-2)
         keys = self.keys_mlp(context_actions)

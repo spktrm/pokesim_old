@@ -100,6 +100,7 @@ class Inference:
             model_output = ModelOutput(*(arr.cpu().squeeze().numpy() for arr in output))
             fut.set_result(model_output)
 
+    @torch.no_grad()
     def _forward_model(self, buffer: List[EnvStep]) -> ActorStep:
         batch = preprocess(np.stack([step.raw_obs for step in buffer], axis=1))
         batch = {k: torch.from_numpy(v).to(self.device) for k, v in batch.items()}

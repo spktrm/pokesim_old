@@ -23,7 +23,7 @@ function formatKey(key: string): string {
 function getMappingValue(
     pokemon: AnyObject,
     mapping: Object,
-    key: string
+    key: string,
 ): number {
     let suffix: string;
     if (key === "asone") {
@@ -45,7 +45,7 @@ function getPublicPokemon(pokemon: AnyObject, active: boolean) {
     let moveTokens = [];
     for (let i = 0; i < 4; i++) {
         moveTokens.push(
-            getMappingValue(pokemon, moveMapping, pokemon.moves[i])
+            getMappingValue(pokemon, moveMapping, pokemon.moves[i]),
         );
     }
     const out = [
@@ -67,7 +67,7 @@ function getPrivatePokemon(pokemon: AnyObject) {
     let moveTokens = [];
     for (let i = 0; i < 4; i++) {
         moveTokens.push(
-            getMappingValue(pokemon, moveMapping, pokemon.moves[i])
+            getMappingValue(pokemon, moveMapping, pokemon.moves[i]),
         );
     }
     const out = [
@@ -158,7 +158,7 @@ export class Uint16State {
         for (const [activeIndex, activePokemon] of actives.entries()) {
             if (activePokemon !== null) {
                 for (const [boost, value] of Object.entries(
-                    activePokemon.boosts
+                    activePokemon.boosts,
                 )) {
                     boostsVector[activeIndex + boostsMapping[boost]] = value;
                 }
@@ -172,7 +172,7 @@ export class Uint16State {
         const pseudoWeatherVector = Array(9);
         pseudoWeatherVector.fill(0);
         for (const [index, [name, pseudoWeather]] of Object.entries(
-            field.pseudoWeather
+            field.pseudoWeather,
         ).entries()) {
             pseudoWeatherVector[index] = pseudoWeatherMapping[name];
             pseudoWeatherVector[index + 1] = pseudoWeather.minDuration;
@@ -204,7 +204,7 @@ export class Uint16State {
         for (const [activeIndex, activePokemon] of actives.entries()) {
             if (activePokemon !== null) {
                 for (const [volatileIndex, volatileStatus] of Object.values(
-                    activePokemon.volatiles
+                    activePokemon.volatiles,
                 ).entries()) {
                     volatileStatusVector[activeIndex + volatileIndex] =
                         (volatileStatusMapping[volatileStatus.id] << 8) |
@@ -226,7 +226,7 @@ export class Uint16State {
 
     getSideConditions(sideConditions: SideConditions): number[] {
         const sideConditionVector = Array(
-            Object.keys(sideConditionsMapping).length
+            Object.keys(sideConditionsMapping).length,
         );
         sideConditionVector.fill(0);
         for (const [name, sideCondition] of Object.entries(sideConditions)) {
@@ -270,7 +270,7 @@ export class Uint16State {
             } else {
                 arr = this.getPokemon(
                     team[i],
-                    activeIdents.includes(team[i].ident)
+                    activeIdents.includes(team[i].ident),
                 );
             }
             pokemon.push(arr);

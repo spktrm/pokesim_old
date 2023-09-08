@@ -38,7 +38,7 @@ def main():
         total = torch.cat([weights[key].flatten() for key in param_keys])
         param_traj["total"].append(total)
 
-    n_components = 3
+    n_components = 2
     plot_fn = lambda n: px.scatter if n == 2 else px.scatter_3d
 
     for key_idx, (key, values) in enumerate(param_traj.items()):

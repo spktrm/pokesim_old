@@ -1,9 +1,18 @@
 import json
 import time
+import torch
+import uvloop
 import asyncio
 import logging
+import random
 import requests
 import websockets
+import numpy as np
+
+from pokesim.utils import preprocess
+from pokesim.constants import _NUM_HISTORY
+from pokesim.structs import EnvStep
+from pokesim.model.main import Model
 
 logging.basicConfig(level=logging.NOTSET)
 logger = logging.getLogger(__name__)
@@ -174,7 +183,7 @@ class PSWebsocketClient:
 
 
 async def start_battle() -> asyncio.subprocess.Process:
-    command = "node dist/src/eval.js"
+    command = "node dist/src/eval.js 2>> err.log"
 
     process = await asyncio.create_subprocess_shell(
         command,
@@ -186,12 +195,54 @@ async def start_battle() -> asyncio.subprocess.Process:
     return process
 
 
+def _get_action(policy: np.ndarray):
+    action = random.choices(
+        population=list(range(policy.shape[-1])),
+        k=1,
+        weights=policy.squeeze().tolist(),
+    )
+    return action[0]
+
+
 async def read(
-    ps_websocket_client: PSWebsocketClient, battle: asyncio.subprocess.Process
+    ps_websocket_client: PSWebsocketClient, battle: asyncio.subprocess.Process, model
 ):
+    hist = []
+    battle_tag = await battle.stdout.readline()
+    battle_tag = battle_tag.decode().strip()[1:]
+
     while True:
-        data = await battle.stdout.read(400)
-        print(data)
+        data = await battle.stdout.readuntil(b"\n\n")
+
+        rqid = await battle.stdout.readline()
+        rqid = rqid.decode().strip()
+
+        env_step = EnvStep.from_data(data)
+
+        hist.append(env_step)
+        env_step = EnvStep.from_stack(hist[-_NUM_HISTORY:])
+        batch = preprocess(env_step.raw_obs)
+        batch = {k: torch.from_numpy(v) for k, v in batch.items()}
+        mask = torch.from_numpy(env_step.legal.astype(np.bool_))
+        model_output = model(**batch, mask=mask)
+        policy = model_output.policy.detach().numpy()
+        action = _get_action(policy)
+
+        if action <= 3:
+            prefix = "move"
+            index = action
+        else:
+            prefix = "switch"
+            index = action - 4
+
+        index += 1
+
+        await ps_websocket_client.send_message(
+            battle_tag, [repr([round(v, 2) for v in policy.squeeze().tolist()])]
+        )
+        await ps_websocket_client.send_message(
+            battle_tag, [f"/choose {prefix} {index}", rqid]
+        )
 
 
 async def write(
@@ -202,16 +253,16 @@ async def write(
         logger.info(msg)
 
         battle.stdin.write(msg.encode("utf-8"))
-        await battle.stdin.drain()
+        await asyncio.sleep(0.1)
 
 
 async def pokemon_battle(
-    ps_websocket_client: PSWebsocketClient, battle_format: str
+    ps_websocket_client: PSWebsocketClient, battle_format: str, params
 ) -> str:
     battle = await start_battle()
     await asyncio.gather(
-        read(ps_websocket_client, battle),
         write(ps_websocket_client, battle),
+        read(ps_websocket_client, battle, params),
     )
 
 
@@ -230,6 +281,10 @@ async def main():
     await ps_websocket_client.login()
     await asyncio.sleep(1)
 
+    params = Model()
+    init = torch.load("ckpts/ckpt-176131.pt")
+    params.load_state_dict(init)
+
     wins = 0
     losses = 0
 
@@ -242,7 +297,9 @@ async def main():
             ShowdownConfig.battle_format,
             ShowdownConfig.team,
         )
-        winner = await pokemon_battle(ps_websocket_client, ShowdownConfig.battle_format)
+        winner = await pokemon_battle(
+            ps_websocket_client, ShowdownConfig.battle_format, params
+        )
         if winner == ShowdownConfig.username:
             wins += 1
         else:
@@ -250,4 +307,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    uvloop.install()
     asyncio.run(main())

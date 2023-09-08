@@ -154,17 +154,10 @@ def learn_loop(learner: Learner, queue: mp.Queue):
         if not _DEBUG:
             wandb.log(logs)
 
-        # if learner.learner_steps % 2500 == 0:
-        #     torch.save(
-        #         learner.params.state_dict(),
-        #         f"ckpts/ckpt-{learner.learner_steps}.pt",
-        #     )
-        # progress.update()
-
 
 def main():
     init = None
-    # init = torch.load("ckpts/ckpt-45563.pt")
+    # init = torch.load("ckpts/ckpt-176131.pt")
     learner = Learner(init)
 
     if not _DEBUG:

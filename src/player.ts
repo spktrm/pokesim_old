@@ -73,7 +73,7 @@ export class Player {
         playerIndex: number,
         game: Game,
         gens: Generations,
-        debug: boolean = false
+        debug: boolean = false,
     ) {
         this.game = game;
         this.playerIndex = playerIndex;
@@ -163,38 +163,29 @@ export class Player {
         }
         return isActionRequired(chunk, this.room?.request ?? {});
     }
-    async writeState(outStream: WriteStream, state: Buffer) {
-        console.log(state);
-        // if (this.debug) {
-        //     await outStream.write(state);
-        //     await this.stream.write(
-        //         Math.random() < 0.5
-        //             ? getRandomAction(this.room.request)
-        //             : "default"
-        //     );
-        // } else {
-        //     await outStream.write(state);
-        // }
-    }
-    async receiveChunk(outStream: WriteStream, value: string) {
-        let act: boolean, state: Buffer;
-
-        act = this.receive(value);
-        if (act) {
-            state = this.getState();
-            await this.writeState(outStream, state);
-            this.prevRequest = this.room.request;
-            this.room.request = null;
-        }
-    }
     async pipeTo(outStream: WriteStream) {
-        let value: string | string[], done: any, state: Buffer;
+        let value: string | string[], done: any, state: Buffer, act: boolean;
 
         const id = v4();
 
         while ((({ value, done } = await this.stream.next()), !done)) {
             try {
-                this.receiveChunk(outStream, value);
+                act = this.receive(value);
+                if (act) {
+                    state = this.getState();
+                    if (this.debug) {
+                        await outStream.write(state);
+                        await this.stream.write(
+                            Math.random() < 0.5
+                                ? getRandomAction(this.room.request)
+                                : "default",
+                        );
+                    } else {
+                        await outStream.write(state);
+                    }
+                    this.prevRequest = this.room.request;
+                    this.room.request = null;
+                }
             } catch (err) {
                 console.error(err + "\n\n");
                 fs.writeFileSync(
@@ -202,7 +193,7 @@ export class Player {
                     JSON.stringify({
                         log: this.log,
                         inputLog: this.game.stream.battle.inputLog,
-                    })
+                    }),
                 );
             }
         }

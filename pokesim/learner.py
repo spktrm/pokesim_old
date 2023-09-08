@@ -154,7 +154,7 @@ class Learner:
         # Create initial parameters.
         self.params = Model()
         if init is not None:
-            self.params.load_state_dict(init)
+            self.params.load_state_dict(init, strict=False)
         self.params_actor = deepcopy(self.params).share_memory()
         self.params_target = deepcopy(self.params)
         self.params_prev = deepcopy(self.params)
@@ -285,7 +285,8 @@ class Learner:
         policy_target_norm_p1 = (valid * (player_id == 0)).sum()
         policy_target_norm_p2 = (valid * (player_id == 1)).sum()
 
-        t_loss = 0
+        tv_loss = 0
+        tp_loss = 0
 
         for ti in range(Tnum):
             for bi in range(Bnum):
@@ -300,15 +301,16 @@ class Learner:
                 }
                 pi, v, _, logit = self.params(**minibatch)
 
-                loss = 0
+                v_loss = 0
+                p_loss = 0
 
                 loss_v = get_loss_v(
                     [v] * _NUM_PLAYERS,
                     [v_target[ts:tf, bs:bf] for v_target in v_target_list],
                     [has_played[ts:tf, bs:bf] for has_played in has_played_list],
                 )
-                loss += loss_v[0] / has_played_p1
-                loss += loss_v[1] / has_played_p2
+                v_loss += loss_v[0] / has_played_p1
+                v_loss += loss_v[1] / has_played_p2
 
                 # Uses v-trace to define q-values for Nerd
                 loss_nerd = get_loss_nerd(
@@ -322,21 +324,26 @@ class Learner:
                     clip=self.config.nerd.clip,
                     threshold=self.config.nerd.beta,
                 )
-                loss += loss_nerd[0] / policy_target_norm_p1
-                loss += loss_nerd[1] / policy_target_norm_p2
+                p_loss += loss_nerd[0] / policy_target_norm_p1
+                p_loss += loss_nerd[1] / policy_target_norm_p2
 
+                loss = v_loss + p_loss
                 loss.backward()
 
-                t_loss += loss.item()
+                tv_loss += v_loss.item()
+                tp_loss += p_loss.item()
 
-        return t_loss
+        return {
+            "v_loss": tv_loss,
+            "p_loss": tp_loss,
+        }
 
     def update_parameters(self, batch: Batch, alpha: float, update_target_net: bool):
         """A jitted pure-functional part of the `step`."""
 
         self.optimizer.zero_grad()
 
-        loss_val = self.loss(batch, alpha)
+        loss_vals = self.loss(batch, alpha)
 
         nn.utils.clip_grad.clip_grad_value_(
             self.params.parameters(), self.config.clip_gradient
@@ -361,7 +368,7 @@ class Learner:
         draw_ratio = draws.sum() / batch.valid.shape[1]
 
         logs = {
-            "loss": loss_val,
+            **loss_vals,
             "draw_ratio": draw_ratio.item(),
         }
         return logs
